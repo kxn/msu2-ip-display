@@ -13,6 +13,7 @@ lerna-debug.log*
 node_modules
 dist
 dist-ssr
+target/
 *.local
 
 # Local Codex/research scratch space
