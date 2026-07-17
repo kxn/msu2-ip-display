@@ -24,6 +24,7 @@ pub struct Runtime<T> {
     connected: bool,
     last_keepalive: Instant,
     timeout_counter: TimeoutCounter,
+    pending_display_action: Option<DaemonAction>,
 }
 
 impl<T: RuntimeIo> Runtime<T> {
@@ -35,6 +36,7 @@ impl<T: RuntimeIo> Runtime<T> {
             connected: false,
             last_keepalive: now,
             timeout_counter: TimeoutCounter::new(3),
+            pending_display_action: None,
         }
     }
 
@@ -56,24 +58,28 @@ impl<T: RuntimeIo> Runtime<T> {
             }
 
             if let Err(err) = self.io.connect(device) {
-                return self.handle_runtime_error("connect", err);
+                return self.handle_runtime_error("connect", err, true);
             }
             self.connected = true;
             self.timeout_counter.record_success();
 
             for action in self.daemon.handle_event(DaemonEvent::HandshakeOk) {
-                if let Err(err) = self.apply_action(action) {
-                    return self.handle_runtime_error("show pending", err);
+                if let Err(err) = self.apply_daemon_action(action) {
+                    return self.handle_runtime_error("show pending", err, true);
                 }
             }
         }
 
-        let snapshot = match self.io.network_snapshot() {
-            Ok(snapshot) => {
-                self.timeout_counter.record_success();
-                snapshot
+        if let Some(action) = self.pending_display_action.clone() {
+            if let Err(err) = self.apply_action(action) {
+                return self.handle_runtime_error("display retry", err, true);
             }
-            Err(err) => return self.handle_runtime_error("network snapshot", err),
+            self.pending_display_action = None;
+        }
+
+        let snapshot = match self.io.network_snapshot() {
+            Ok(snapshot) => snapshot,
+            Err(err) => return self.handle_runtime_error("network snapshot", err, false),
         };
         let now = self.io.now();
 
@@ -81,20 +87,35 @@ impl<T: RuntimeIo> Runtime<T> {
             .daemon
             .handle_event(DaemonEvent::NetworkSnapshot { snapshot, now })
         {
-            if let Err(err) = self.apply_action(action) {
-                return self.handle_runtime_error("display update", err);
+            if let Err(err) = self.apply_daemon_action(action) {
+                return self.handle_runtime_error("display update", err, true);
             }
         }
 
         if now.duration_since(self.last_keepalive) >= Duration::from_secs(10) {
             if let Err(err) = self.io.send_writes(&DisplayRenderer::keepalive()) {
-                return self.handle_runtime_error("keepalive", err);
+                return self.handle_runtime_error("keepalive", err, true);
             }
             self.timeout_counter.record_success();
             self.last_keepalive = now;
         }
 
         self.io.sleep(Duration::from_millis(500));
+        Ok(())
+    }
+
+    fn apply_daemon_action(&mut self, action: DaemonAction) -> io::Result<()> {
+        let is_display_action = matches!(
+            action,
+            DaemonAction::ShowPending | DaemonAction::ShowDhcpFailed | DaemonAction::ShowIp(_)
+        );
+        if is_display_action {
+            self.pending_display_action = Some(action.clone());
+        }
+        self.apply_action(action)?;
+        if is_display_action {
+            self.pending_display_action = None;
+        }
         Ok(())
     }
 
@@ -125,13 +146,19 @@ impl<T: RuntimeIo> Runtime<T> {
     }
 
     fn disconnect_device(&mut self) {
+        self.pending_display_action = None;
         for action in self.daemon.handle_event(DaemonEvent::DeviceDisconnected) {
             let _ = self.apply_action(action);
         }
         self.timeout_counter.record_success();
     }
 
-    fn handle_runtime_error(&mut self, action: &str, err: io::Error) -> io::Result<()> {
+    fn handle_runtime_error(
+        &mut self,
+        action: &str,
+        err: io::Error,
+        counts_serial_timeout: bool,
+    ) -> io::Result<()> {
         match classify_io_error(&err) {
             SerialErrorKind::Disconnected => {
                 crate::logging::warn(&format!("{action} failed: {err}"));
@@ -140,11 +167,13 @@ impl<T: RuntimeIo> Runtime<T> {
                 Ok(())
             }
             SerialErrorKind::Timeout => {
-                if self.timeout_counter.record_timeout() {
+                if counts_serial_timeout && self.timeout_counter.record_timeout() {
                     crate::logging::warn(&format!("{action} timed out repeatedly: {err}"));
                     self.disconnect_device();
-                } else {
+                } else if counts_serial_timeout {
                     crate::logging::debug(&format!("{action} timed out once: {err}"));
+                } else {
+                    crate::logging::debug(&format!("{action} timed out: {err}"));
                 }
                 self.io.sleep(Duration::from_millis(500));
                 Ok(())
@@ -370,13 +399,20 @@ mod tests {
     }
 
     #[test]
-    fn tick_disconnects_after_three_consecutive_timeouts() {
+    fn tick_disconnects_after_three_consecutive_serial_timeouts() {
         let start = Instant::now();
         let io = FakeIo {
             now: Cell::new(Some(start)),
             devices: vec![target_device()],
             snapshot_results: VecDeque::from([
                 Ok(ipv4_snapshot([192, 168, 1, 20])),
+                Ok(ipv4_snapshot([192, 168, 1, 20])),
+                Ok(ipv4_snapshot([192, 168, 1, 20])),
+                Ok(ipv4_snapshot([192, 168, 1, 20])),
+            ]),
+            send_results: VecDeque::from([
+                Ok(()),
+                Ok(()),
                 Err(timeout_error()),
                 Err(timeout_error()),
                 Err(timeout_error()),
@@ -386,11 +422,11 @@ mod tests {
         let mut runtime = Runtime::new(options(), io);
 
         runtime.tick().unwrap();
-        runtime.io.set_now(start + Duration::from_secs(1));
+        runtime.io.set_now(start + Duration::from_secs(11));
         runtime.tick().unwrap();
-        runtime.io.set_now(start + Duration::from_secs(2));
+        runtime.io.set_now(start + Duration::from_secs(12));
         runtime.tick().unwrap();
-        runtime.io.set_now(start + Duration::from_secs(3));
+        runtime.io.set_now(start + Duration::from_secs(13));
         runtime.tick().unwrap();
 
         assert_eq!(
@@ -435,5 +471,75 @@ mod tests {
             .windows(2)
             .any(|window| window == ["disconnect", "sleep:500"]));
         assert!(runtime.io.events.iter().any(|event| event == "scan"));
+    }
+
+    #[test]
+    fn serial_timeouts_remain_consecutive_across_network_snapshot_successes() {
+        let start = Instant::now();
+        let io = FakeIo {
+            now: Cell::new(Some(start)),
+            devices: vec![target_device()],
+            snapshot_results: VecDeque::from([
+                Ok(ipv4_snapshot([192, 168, 1, 20])),
+                Ok(ipv4_snapshot([192, 168, 1, 20])),
+                Ok(ipv4_snapshot([192, 168, 1, 21])),
+                Ok(ipv4_snapshot([192, 168, 1, 22])),
+            ]),
+            send_results: VecDeque::from([
+                Ok(()),
+                Ok(()),
+                Err(timeout_error()),
+                Err(timeout_error()),
+                Err(timeout_error()),
+            ]),
+            ..FakeIo::default()
+        };
+        let mut runtime = Runtime::new(options(), io);
+
+        runtime.tick().unwrap();
+        runtime.io.set_now(start + Duration::from_secs(11));
+        runtime.tick().unwrap();
+        runtime.io.set_now(start + Duration::from_secs(12));
+        runtime.tick().unwrap();
+        runtime.io.set_now(start + Duration::from_secs(13));
+        runtime.tick().unwrap();
+
+        assert_eq!(
+            runtime
+                .io
+                .events
+                .iter()
+                .filter(|event| event.as_str() == "disconnect")
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn timed_out_display_update_is_retried_for_identical_snapshot() {
+        let start = Instant::now();
+        let snapshot = ipv4_snapshot([192, 168, 1, 20]);
+        let io = FakeIo {
+            now: Cell::new(Some(start)),
+            devices: vec![target_device()],
+            snapshot_results: VecDeque::from([Ok(snapshot.clone()), Ok(snapshot)]),
+            send_results: VecDeque::from([Ok(()), Err(timeout_error()), Ok(())]),
+            ..FakeIo::default()
+        };
+        let mut runtime = Runtime::new(options(), io);
+
+        runtime.tick().unwrap();
+        runtime.io.set_now(start + Duration::from_secs(1));
+        runtime.tick().unwrap();
+
+        assert_eq!(
+            runtime
+                .io
+                .events
+                .iter()
+                .filter(|event| event.as_str() == "writes:ip")
+                .count(),
+            2
+        );
     }
 }

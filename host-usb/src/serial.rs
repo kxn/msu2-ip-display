@@ -112,6 +112,7 @@ impl SerialSession {
     }
 
     pub fn write_all(&mut self, bytes: &[u8]) -> std::io::Result<()> {
+        let deadline = Instant::now() + Duration::from_millis(500);
         let mut offset = 0;
         while offset < bytes.len() {
             let rc = unsafe {
@@ -125,14 +126,20 @@ impl SerialSession {
                 let err = std::io::Error::last_os_error();
                 match classify_io_error(&err) {
                     SerialErrorKind::Timeout => {
-                        self.wait_for(libc::POLLOUT, Duration::from_millis(500), "write")?;
+                        let remaining = write_deadline_remaining(deadline)?;
+                        if !self.wait_for(libc::POLLOUT, remaining, "write")? {
+                            return Err(serial_timeout_error("write"));
+                        }
                     }
                     _ => return Err(err),
                 }
                 continue;
             }
             if rc == 0 {
-                self.wait_for(libc::POLLOUT, Duration::from_millis(500), "write")?;
+                let remaining = write_deadline_remaining(deadline)?;
+                if !self.wait_for(libc::POLLOUT, remaining, "write")? {
+                    return Err(serial_timeout_error("write"));
+                }
                 continue;
             }
             offset += rc as usize;
@@ -251,6 +258,22 @@ impl SerialSession {
         }
         Ok(true)
     }
+}
+
+#[cfg(target_os = "linux")]
+fn write_deadline_remaining(deadline: Instant) -> std::io::Result<Duration> {
+    deadline
+        .checked_duration_since(Instant::now())
+        .filter(|duration| !duration.is_zero())
+        .ok_or_else(|| serial_timeout_error("write"))
+}
+
+#[cfg(target_os = "linux")]
+fn serial_timeout_error(action: &str) -> std::io::Error {
+    std::io::Error::new(
+        std::io::ErrorKind::TimedOut,
+        format!("timed out waiting for serial device during {action}"),
+    )
 }
 
 #[cfg(target_os = "linux")]

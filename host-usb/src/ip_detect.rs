@@ -45,6 +45,18 @@ const AF_INET_BITS: u8 = 2;
 const RTN_UNSPEC_BITS: u8 = 0;
 #[cfg(any(target_os = "linux", test))]
 const RTN_UNICAST_BITS: u8 = 1;
+#[cfg(any(target_os = "linux", test))]
+const IFF_UP_BITS: u32 = 0x1;
+#[cfg(any(target_os = "linux", test))]
+const IFF_RUNNING_BITS: u32 = 0x40;
+#[cfg(any(target_os = "linux", test))]
+const RT_TABLE_MAIN_BITS: u32 = 254;
+#[cfg(any(target_os = "linux", test))]
+const NLMSG_ERROR_BITS: u16 = 2;
+#[cfg(any(target_os = "linux", test))]
+const NLMSG_DONE_BITS: u16 = 3;
+#[cfg(any(target_os = "linux", test))]
+const RTA_TABLE_BITS: u16 = 15;
 
 #[cfg(target_os = "linux")]
 pub fn collect_network_snapshot() -> std::io::Result<NetworkSnapshot> {
@@ -173,6 +185,23 @@ fn route_is_default_ipv4(family: u8, dst_len: u8, route_type: u8) -> bool {
         && matches!(route_type, RTN_UNSPEC_BITS | RTN_UNICAST_BITS)
 }
 
+#[cfg(any(target_os = "linux", test))]
+fn interface_is_lower_up(flags: u32) -> bool {
+    flags & IFF_RUNNING_BITS != 0
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn route_is_main_default_ipv4(
+    family: u8,
+    dst_len: u8,
+    route_type: u8,
+    rtm_table: u8,
+    rta_table: Option<u32>,
+) -> bool {
+    route_is_default_ipv4(family, dst_len, route_type)
+        && rta_table.unwrap_or(rtm_table as u32) == RT_TABLE_MAIN_BITS
+}
+
 #[cfg(target_os = "linux")]
 fn collect_ipv4_addresses_getifaddrs(snapshot: &mut NetworkSnapshot) -> std::io::Result<()> {
     let mut addrs = std::ptr::null_mut();
@@ -190,9 +219,8 @@ fn collect_ipv4_addresses_getifaddrs(snapshot: &mut NetworkSnapshot) -> std::io:
                     .to_string_lossy()
                     .into_owned();
                 let flags = ifaddr.ifa_flags;
-                let is_up = flags & libc::IFF_UP as u32 != 0;
-                let is_lower_up = flags & libc::IFF_RUNNING as u32 != 0
-                    || (is_up && flags & libc::IFF_LOOPBACK as u32 == 0);
+                let is_up = flags & IFF_UP_BITS != 0;
+                let is_lower_up = interface_is_lower_up(flags);
 
                 if !snapshot.addresses.iter().any(|candidate| {
                     candidate.interface == interface && candidate.address == address
@@ -219,7 +247,7 @@ fn collect_ipv4_addresses_getifaddrs(snapshot: &mut NetworkSnapshot) -> std::io:
 #[cfg(target_os = "linux")]
 fn enrich_dynamic_flags_from_rtnetlink(snapshot: &mut NetworkSnapshot) -> std::io::Result<()> {
     let request = NetlinkRequest {
-        header: libc::nlmsghdr {
+        header: NlMsgHdr {
             nlmsg_len: std::mem::size_of::<NetlinkRequest<IfAddrMsg>>() as u32,
             nlmsg_type: libc::RTM_GETADDR,
             nlmsg_flags: (libc::NLM_F_REQUEST | libc::NLM_F_DUMP) as u16,
@@ -247,7 +275,7 @@ fn enrich_dynamic_flags_from_rtnetlink(snapshot: &mut NetworkSnapshot) -> std::i
                 "short ifaddrmsg payload",
             ));
         }
-        let message = unsafe { &*(payload.as_ptr().cast::<IfAddrMsg>()) };
+        let message = read_ifaddr_msg(payload)?;
         if message.ifa_family != AF_INET_BITS {
             return Ok(());
         }
@@ -271,7 +299,7 @@ fn enrich_dynamic_flags_from_rtnetlink(snapshot: &mut NetworkSnapshot) -> std::i
                     }
                     value if value == libc::IFA_CACHEINFO => {
                         if data.len() >= std::mem::size_of::<IfaCacheInfo>() {
-                            let cache = unsafe { &*(data.as_ptr().cast::<IfaCacheInfo>()) };
+                            let cache = read_ifa_cache_info(data)?;
                             preferred_lifetime = Some(cache.ifa_prefered);
                             valid_lifetime = Some(cache.ifa_valid);
                         }
@@ -305,7 +333,7 @@ fn enrich_dynamic_flags_from_rtnetlink(snapshot: &mut NetworkSnapshot) -> std::i
 #[cfg(target_os = "linux")]
 fn collect_default_routes_rtnetlink(snapshot: &mut NetworkSnapshot) -> std::io::Result<()> {
     let request = NetlinkRequest {
-        header: libc::nlmsghdr {
+        header: NlMsgHdr {
             nlmsg_len: std::mem::size_of::<NetlinkRequest<RtMsg>>() as u32,
             nlmsg_type: libc::RTM_GETROUTE,
             nlmsg_flags: (libc::NLM_F_REQUEST | libc::NLM_F_DUMP) as u16,
@@ -336,18 +364,28 @@ fn collect_default_routes_rtnetlink(snapshot: &mut NetworkSnapshot) -> std::io::
                 "short rtmsg payload",
             ));
         }
-        let message = unsafe { &*(payload.as_ptr().cast::<RtMsg>()) };
-        if !route_is_default_ipv4(message.rtm_family, message.rtm_dst_len, message.rtm_type) {
-            return Ok(());
-        }
+        let message = read_rt_msg(payload)?;
 
         let mut interface_index = None;
+        let mut route_table = None;
         parse_rtattrs(&payload[std::mem::size_of::<RtMsg>()..], |kind, data| {
             if kind == libc::RTA_OIF {
                 interface_index = read_u32(data);
+            } else if kind == RTA_TABLE_BITS {
+                route_table = read_u32(data);
             }
             Ok(())
         })?;
+
+        if !route_is_main_default_ipv4(
+            message.rtm_family,
+            message.rtm_dst_len,
+            message.rtm_type,
+            message.rtm_table,
+            route_table,
+        ) {
+            return Ok(());
+        }
 
         let Some(interface_index) = interface_index else {
             return Ok(());
@@ -372,11 +410,31 @@ fn collect_default_routes_rtnetlink(snapshot: &mut NetworkSnapshot) -> std::io::
 #[cfg(target_os = "linux")]
 #[repr(C)]
 struct NetlinkRequest<T> {
-    header: libc::nlmsghdr,
+    header: NlMsgHdr,
     body: T,
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", test))]
+#[derive(Clone, Copy)]
+#[repr(C)]
+struct NlMsgHdr {
+    nlmsg_len: u32,
+    nlmsg_type: u16,
+    nlmsg_flags: u16,
+    nlmsg_seq: u32,
+    nlmsg_pid: u32,
+}
+
+#[cfg(any(target_os = "linux", test))]
+#[derive(Clone, Copy)]
+#[repr(C)]
+struct NlMsgErr {
+    error: i32,
+    msg: NlMsgHdr,
+}
+
+#[cfg(any(target_os = "linux", test))]
+#[derive(Clone, Copy)]
 #[repr(C)]
 struct IfAddrMsg {
     ifa_family: u8,
@@ -386,7 +444,8 @@ struct IfAddrMsg {
     ifa_index: u32,
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", test))]
+#[derive(Clone, Copy)]
 #[repr(C)]
 struct IfaCacheInfo {
     ifa_prefered: u32,
@@ -395,7 +454,8 @@ struct IfaCacheInfo {
     tstamp: u32,
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", test))]
+#[derive(Clone, Copy)]
 #[repr(C)]
 struct RtMsg {
     rtm_family: u8,
@@ -409,7 +469,8 @@ struct RtMsg {
     rtm_flags: u32,
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", test))]
+#[derive(Clone, Copy)]
 #[repr(C)]
 struct RtAttr {
     rta_len: u16,
@@ -487,15 +548,15 @@ fn netlink_dump<T>(request: &NetlinkRequest<T>, protocol: i32) -> std::io::Resul
 #[cfg(target_os = "linux")]
 fn netlink_buffer_is_done(buffer: &[u8]) -> std::io::Result<bool> {
     let mut offset = 0usize;
-    while offset + std::mem::size_of::<libc::nlmsghdr>() <= buffer.len() {
-        let header = unsafe { &*(buffer[offset..].as_ptr().cast::<libc::nlmsghdr>()) };
-        if header.nlmsg_len < std::mem::size_of::<libc::nlmsghdr>() as u32 {
+    while offset + std::mem::size_of::<NlMsgHdr>() <= buffer.len() {
+        let header = read_nlmsg_header(&buffer[offset..])?;
+        if header.nlmsg_len < std::mem::size_of::<NlMsgHdr>() as u32 {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
                 "invalid netlink header length",
             ));
         }
-        if header.nlmsg_type == libc::NLMSG_DONE as u16 {
+        if header.nlmsg_type == NLMSG_DONE_BITS {
             return Ok(true);
         }
         offset += nlmsg_align(header.nlmsg_len as usize);
@@ -503,15 +564,15 @@ fn netlink_buffer_is_done(buffer: &[u8]) -> std::io::Result<bool> {
     Ok(false)
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", test))]
 fn parse_netlink_messages<F>(buffer: &[u8], mut visit: F) -> std::io::Result<()>
 where
     F: FnMut(u16, &[u8]) -> std::io::Result<()>,
 {
     let mut offset = 0usize;
-    while offset + std::mem::size_of::<libc::nlmsghdr>() <= buffer.len() {
-        let header = unsafe { &*(buffer[offset..].as_ptr().cast::<libc::nlmsghdr>()) };
-        if header.nlmsg_len < std::mem::size_of::<libc::nlmsghdr>() as u32 {
+    while offset + std::mem::size_of::<NlMsgHdr>() <= buffer.len() {
+        let header = read_nlmsg_header(&buffer[offset..])?;
+        if header.nlmsg_len < std::mem::size_of::<NlMsgHdr>() as u32 {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
                 "invalid netlink message length",
@@ -524,17 +585,17 @@ where
                 "truncated netlink message",
             ));
         }
-        let payload = &buffer[offset + std::mem::size_of::<libc::nlmsghdr>()..end];
+        let payload = &buffer[offset + std::mem::size_of::<NlMsgHdr>()..end];
         match header.nlmsg_type {
-            value if value == libc::NLMSG_DONE as u16 => break,
-            value if value == libc::NLMSG_ERROR as u16 => {
-                if payload.len() < std::mem::size_of::<libc::nlmsgerr>() {
+            value if value == NLMSG_DONE_BITS => break,
+            value if value == NLMSG_ERROR_BITS => {
+                if payload.len() < std::mem::size_of::<NlMsgErr>() {
                     return Err(std::io::Error::new(
                         std::io::ErrorKind::InvalidData,
                         "short netlink error payload",
                     ));
                 }
-                let message = unsafe { &*(payload.as_ptr().cast::<libc::nlmsgerr>()) };
+                let message = read_nlmsg_error(payload)?;
                 if message.error == 0 {
                     break;
                 }
@@ -547,14 +608,14 @@ where
     Ok(())
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", test))]
 fn parse_rtattrs<F>(payload: &[u8], mut visit: F) -> std::io::Result<()>
 where
     F: FnMut(u16, &[u8]) -> std::io::Result<()>,
 {
     let mut offset = 0usize;
     while offset + std::mem::size_of::<RtAttr>() <= payload.len() {
-        let attr = unsafe { &*(payload[offset..].as_ptr().cast::<RtAttr>()) };
+        let attr = read_rt_attr(&payload[offset..])?;
         let attr_len = attr.rta_len as usize;
         if attr_len < std::mem::size_of::<RtAttr>() || offset + attr_len > payload.len() {
             return Err(std::io::Error::new(
@@ -568,6 +629,47 @@ where
         offset += rta_align(attr_len);
     }
     Ok(())
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn read_nlmsg_header(data: &[u8]) -> std::io::Result<NlMsgHdr> {
+    read_unaligned_struct(data, "netlink header")
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn read_nlmsg_error(data: &[u8]) -> std::io::Result<NlMsgErr> {
+    read_unaligned_struct(data, "netlink error")
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn read_ifaddr_msg(data: &[u8]) -> std::io::Result<IfAddrMsg> {
+    read_unaligned_struct(data, "ifaddrmsg")
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn read_ifa_cache_info(data: &[u8]) -> std::io::Result<IfaCacheInfo> {
+    read_unaligned_struct(data, "ifa cache info")
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn read_rt_msg(data: &[u8]) -> std::io::Result<RtMsg> {
+    read_unaligned_struct(data, "rtmsg")
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn read_rt_attr(data: &[u8]) -> std::io::Result<RtAttr> {
+    read_unaligned_struct(data, "rtattr")
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn read_unaligned_struct<T: Copy>(data: &[u8], name: &str) -> std::io::Result<T> {
+    if data.len() < std::mem::size_of::<T>() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("short {name}"),
+        ));
+    }
+    Ok(unsafe { std::ptr::read_unaligned(data.as_ptr().cast::<T>()) })
 }
 
 #[cfg(target_os = "linux")]
@@ -614,7 +716,7 @@ fn bytes_to_ipv4(data: &[u8]) -> Option<Ipv4Addr> {
     Some(Ipv4Addr::new(data[0], data[1], data[2], data[3]))
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", test))]
 fn read_u32(data: &[u8]) -> Option<u32> {
     if data.len() < std::mem::size_of::<u32>() {
         return None;
@@ -622,12 +724,12 @@ fn read_u32(data: &[u8]) -> Option<u32> {
     Some(u32::from_ne_bytes([data[0], data[1], data[2], data[3]]))
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", test))]
 fn nlmsg_align(len: usize) -> usize {
     (len + 3) & !3
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", test))]
 fn rta_align(len: usize) -> usize {
     (len + 3) & !3
 }
@@ -635,6 +737,13 @@ fn rta_align(len: usize) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn append_struct<T: Copy>(out: &mut Vec<u8>, value: &T) {
+        let bytes = unsafe {
+            std::slice::from_raw_parts((value as *const T).cast::<u8>(), std::mem::size_of::<T>())
+        };
+        out.extend_from_slice(bytes);
+    }
 
     fn addr(interface: &str, address: [u8; 4], is_dynamic: bool) -> AddressCandidate {
         AddressCandidate {
@@ -778,5 +887,170 @@ mod tests {
     fn default_route_helper_accepts_only_ipv4_default_unicast() {
         assert!(route_is_default_ipv4(AF_INET_BITS, 0, RTN_UNICAST_BITS));
         assert!(!route_is_default_ipv4(AF_INET_BITS, 24, RTN_UNICAST_BITS));
+    }
+
+    #[test]
+    fn lower_up_requires_running_flag_when_available() {
+        let up_non_loopback = IFF_UP_BITS;
+        assert!(!interface_is_lower_up(up_non_loopback));
+        assert!(interface_is_lower_up(IFF_UP_BITS | IFF_RUNNING_BITS));
+    }
+
+    #[test]
+    fn default_route_helper_accepts_only_main_table_routes() {
+        assert!(route_is_main_default_ipv4(
+            AF_INET_BITS,
+            0,
+            RTN_UNICAST_BITS,
+            RT_TABLE_MAIN_BITS as u8,
+            None,
+        ));
+        assert!(!route_is_main_default_ipv4(
+            AF_INET_BITS,
+            0,
+            RTN_UNICAST_BITS,
+            100,
+            None,
+        ));
+        assert!(!route_is_main_default_ipv4(
+            AF_INET_BITS,
+            0,
+            RTN_UNICAST_BITS,
+            RT_TABLE_MAIN_BITS as u8,
+            Some(100),
+        ));
+        assert!(route_is_main_default_ipv4(
+            AF_INET_BITS,
+            0,
+            RTN_UNICAST_BITS,
+            100,
+            Some(RT_TABLE_MAIN_BITS),
+        ));
+    }
+
+    #[test]
+    fn netlink_message_parser_reads_unaligned_headers() {
+        let payload = [7, 8, 9];
+        let header = NlMsgHdr {
+            nlmsg_len: (std::mem::size_of::<NlMsgHdr>() + payload.len()) as u32,
+            nlmsg_type: 99,
+            nlmsg_flags: 0,
+            nlmsg_seq: 1,
+            nlmsg_pid: 0,
+        };
+        let done = NlMsgHdr {
+            nlmsg_len: std::mem::size_of::<NlMsgHdr>() as u32,
+            nlmsg_type: NLMSG_DONE_BITS,
+            nlmsg_flags: 0,
+            nlmsg_seq: 1,
+            nlmsg_pid: 0,
+        };
+        let mut buffer = vec![0xaa];
+        append_struct(&mut buffer, &header);
+        buffer.extend_from_slice(&payload);
+        append_struct(&mut buffer, &done);
+
+        let mut seen = Vec::new();
+        parse_netlink_messages(&buffer[1..], |message_type, data| {
+            seen.push((message_type, data.to_vec()));
+            Ok(())
+        })
+        .unwrap();
+
+        assert_eq!(seen, vec![(99, payload.to_vec())]);
+    }
+
+    #[test]
+    fn netlink_message_parser_reads_unaligned_errors() {
+        let error = NlMsgErr {
+            error: -22,
+            msg: NlMsgHdr {
+                nlmsg_len: std::mem::size_of::<NlMsgHdr>() as u32,
+                nlmsg_type: 0,
+                nlmsg_flags: 0,
+                nlmsg_seq: 1,
+                nlmsg_pid: 0,
+            },
+        };
+        let header = NlMsgHdr {
+            nlmsg_len: (std::mem::size_of::<NlMsgHdr>() + std::mem::size_of::<NlMsgErr>()) as u32,
+            nlmsg_type: NLMSG_ERROR_BITS,
+            nlmsg_flags: 0,
+            nlmsg_seq: 1,
+            nlmsg_pid: 0,
+        };
+        let mut buffer = vec![0xaa];
+        append_struct(&mut buffer, &header);
+        append_struct(&mut buffer, &error);
+
+        let err = parse_netlink_messages(&buffer[1..], |_message_type, _data| Ok(()))
+            .expect_err("negative netlink error should be returned");
+
+        assert_eq!(err.raw_os_error(), Some(22));
+    }
+
+    #[test]
+    fn route_attribute_parser_reads_unaligned_attributes() {
+        let attr = RtAttr {
+            rta_len: (std::mem::size_of::<RtAttr>() + std::mem::size_of::<u32>()) as u16,
+            rta_type: RTA_TABLE_BITS,
+        };
+        let mut buffer = vec![0xaa];
+        append_struct(&mut buffer, &attr);
+        buffer.extend_from_slice(&RT_TABLE_MAIN_BITS.to_ne_bytes());
+
+        let mut seen = Vec::new();
+        parse_rtattrs(&buffer[1..], |kind, data| {
+            seen.push((kind, read_u32(data).unwrap()));
+            Ok(())
+        })
+        .unwrap();
+
+        assert_eq!(seen, vec![(RTA_TABLE_BITS, RT_TABLE_MAIN_BITS)]);
+    }
+
+    #[test]
+    fn netlink_body_readers_copy_from_unaligned_slices() {
+        let ifaddr = IfAddrMsg {
+            ifa_family: AF_INET_BITS,
+            ifa_prefixlen: 24,
+            ifa_flags: IFA_F_PERMANENT_BITS as u8,
+            ifa_scope: 0,
+            ifa_index: 3,
+        };
+        let cache = IfaCacheInfo {
+            ifa_prefered: 30,
+            ifa_valid: INFINITE_LIFETIME,
+            cstamp: 1,
+            tstamp: 2,
+        };
+        let route = RtMsg {
+            rtm_family: AF_INET_BITS,
+            rtm_dst_len: 0,
+            rtm_src_len: 0,
+            rtm_tos: 0,
+            rtm_table: RT_TABLE_MAIN_BITS as u8,
+            rtm_protocol: 0,
+            rtm_scope: 0,
+            rtm_type: RTN_UNICAST_BITS,
+            rtm_flags: 0,
+        };
+
+        let mut ifaddr_buf = vec![0xaa];
+        append_struct(&mut ifaddr_buf, &ifaddr);
+        let mut cache_buf = vec![0xaa];
+        append_struct(&mut cache_buf, &cache);
+        let mut route_buf = vec![0xaa];
+        append_struct(&mut route_buf, &route);
+
+        assert_eq!(read_ifaddr_msg(&ifaddr_buf[1..]).unwrap().ifa_index, 3);
+        assert_eq!(
+            read_ifa_cache_info(&cache_buf[1..]).unwrap().ifa_prefered,
+            30
+        );
+        assert_eq!(
+            read_rt_msg(&route_buf[1..]).unwrap().rtm_table,
+            RT_TABLE_MAIN_BITS as u8
+        );
     }
 }
