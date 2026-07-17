@@ -115,6 +115,14 @@ pub fn write_lcd_data_packet(size: u16, data: &[u8; 256]) -> [u8; 390] {
     packet
 }
 
+pub fn contains_sequence(haystack: &[u8], needle: &[u8]) -> bool {
+    !needle.is_empty()
+        && haystack.len() >= needle.len()
+        && haystack
+            .windows(needle.len())
+            .any(|window| window == needle)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -157,5 +165,14 @@ mod tests {
         assert_eq!(packet.len(), 390);
         assert_eq!(&packet[0..6], &[0x04, 0x00, 0x5a, 0x5a, 0x5a, 0x5a]);
         assert_eq!(&packet[384..390], &[0x02, 0x03, 0x08, 0x00, 0x10, 0x00]);
+    }
+
+    #[test]
+    fn contains_sequence_finds_reply_inside_buffer() {
+        assert!(contains_sequence(
+            &[0xaa, 0x00, 0x4d, 0x53, 0x4e, 0x43, 0x4e, 0xbb],
+            &HANDSHAKE,
+        ));
+        assert!(!contains_sequence(&[0x00, 0x4d, 0x53], &HANDSHAKE));
     }
 }

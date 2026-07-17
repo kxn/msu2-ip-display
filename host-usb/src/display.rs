@@ -81,6 +81,10 @@ impl DisplayRenderer {
         writes
     }
 
+    pub fn keepalive() -> Vec<WireWrite> {
+        dot_writes(DotGlyph { x: 155, y: 75 })
+    }
+
     pub fn layout_ip(ip: Ipv4Addr) -> IpLayout {
         let octets = ip.octets();
         let rows = [
@@ -234,5 +238,17 @@ mod tests {
         assert!(writes
             .iter()
             .any(|write| write.bytes == [0x02, 0x03, 0x11, 0x0f, 0x56, 0x00]));
+    }
+
+    #[test]
+    fn keepalive_dot_stays_within_screen_bounds() {
+        let writes = DisplayRenderer::keepalive();
+        assert_eq!(writes[0].bytes, set_xy_packet(155, 75).to_vec());
+        assert_eq!(
+            writes[1].bytes,
+            set_size_packet(DOT_SIZE, DOT_SIZE).to_vec()
+        );
+        assert!(155 + DOT_SIZE <= SCREEN_WIDTH);
+        assert!(75 + DOT_SIZE <= SCREEN_HEIGHT);
     }
 }

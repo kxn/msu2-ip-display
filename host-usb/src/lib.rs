@@ -6,6 +6,7 @@ pub mod ip_detect;
 pub mod logging;
 pub mod platform;
 pub mod protocol;
+pub mod runtime;
 pub mod serial;
 pub mod service_install;
 pub mod usb_events;

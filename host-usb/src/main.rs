@@ -18,8 +18,8 @@ const INSTALLED_BINARY: &str = "/usr/local/bin/miniboard-ipd";
 fn real_main() -> std::io::Result<()> {
     use miniboard_ipd::cli::{parse_args, Command};
     use miniboard_ipd::service_install::{
-        apply_install, apply_uninstall, detect_init, run_status, InitProbe, InstallRequest,
-        InstallSpec, RealInstallOps,
+        apply_install, apply_uninstall, detect_init, run_status, InstallRequest, InstallSpec,
+        RealInstallOps,
     };
 
     let command = parse_args(std::env::args().skip(1))
@@ -32,7 +32,7 @@ fn real_main() -> std::io::Result<()> {
                 "usb event mode: {:?}",
                 miniboard_ipd::usb_events::choose_event_mode()
             ));
-            miniboard_ipd::logging::info("runtime loop is wired in Task 10");
+            miniboard_ipd::runtime::run_forever(options)?;
         }
         Command::Install(options) => {
             let request = InstallRequest {

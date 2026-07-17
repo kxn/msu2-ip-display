@@ -32,12 +32,10 @@ fn netlink_socket_available() -> bool {
 
 #[cfg(target_os = "linux")]
 fn bind_uevent_netlink(fd: libc::c_int) -> bool {
-    let addr = libc::sockaddr_nl {
-        nl_family: libc::AF_NETLINK as libc::sa_family_t,
-        nl_pad: 0,
-        nl_pid: 0,
-        nl_groups: 1,
-    };
+    let mut addr: libc::sockaddr_nl = unsafe { std::mem::zeroed() };
+    addr.nl_family = libc::AF_NETLINK as libc::sa_family_t;
+    addr.nl_pid = 0;
+    addr.nl_groups = 1;
     let rc = unsafe {
         libc::bind(
             fd,
