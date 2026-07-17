@@ -95,7 +95,7 @@ impl DisplayRenderer {
         for (row_index, (left, right)) in rows.iter().enumerate() {
             let y = start_y + row_index as u16 * (DIGIT_HEIGHT + ROW_GAP);
             let row = format!("{left}.{right}");
-            let mut x = (SCREEN_WIDTH - row_width(&row)) / 2 + row_balance_offset(left, right);
+            let mut x = (SCREEN_WIDTH - row_width(&row)) / 2;
 
             for ch in row.chars() {
                 if ch == '.' {
@@ -131,13 +131,6 @@ fn row_width(row: &str) -> u16 {
     row.chars()
         .map(|ch| if ch == '.' { DOT_SLOT_WIDTH } else { DIGIT_WIDTH })
         .sum()
-}
-
-fn row_balance_offset(left: &str, right: &str) -> u16 {
-    let left_len = left.len() as i16;
-    let right_len = right.len() as i16;
-    let delta = left_len - right_len;
-    (delta.max(0) as u16) * (DIGIT_WIDTH / 2)
 }
 
 fn dot_writes(dot: DotGlyph) -> Vec<WireWrite> {
@@ -212,10 +205,12 @@ mod tests {
     #[test]
     fn short_ip_rows_are_independently_centered() {
         let layout = DisplayRenderer::layout_ip(Ipv4Addr::new(10, 0, 1, 5));
-        assert_eq!(layout.digits[0].x, 52);
-        assert_eq!(layout.digits[2].x, 108);
+        assert_eq!(layout.digits[0].x, 40);
+        assert_eq!(layout.digits[2].x, 96);
         assert_eq!(layout.digits[3].x, 52);
         assert_eq!(layout.digits[4].x, 84);
+        assert_eq!(layout.dots[0].x, 89);
+        assert_eq!(layout.dots[1].x, 77);
     }
 
     #[test]
