@@ -107,7 +107,11 @@ pub fn install_commands(kind: InitKind) -> Vec<Vec<String>> {
             vec!["/etc/init.d/miniboard-ipd".into(), "enable".into()],
             vec!["/etc/init.d/miniboard-ipd".into(), "start".into()],
         ],
-        InitKind::SysV => vec![vec!["service".into(), "miniboard-ipd".into(), "start".into()]],
+        InitKind::SysV => vec![vec![
+            "service".into(),
+            "miniboard-ipd".into(),
+            "start".into(),
+        ]],
         InitKind::BusyBox => vec![vec!["/etc/init.d/S99miniboard-ipd".into(), "start".into()]],
         _ => Vec::new(),
     }
@@ -115,15 +119,12 @@ pub fn install_commands(kind: InitKind) -> Vec<Vec<String>> {
 
 pub fn uninstall_commands(kind: InitKind) -> Vec<Vec<String>> {
     match kind {
-        InitKind::Systemd => vec![
-            vec![
-                "systemctl".into(),
-                "disable".into(),
-                "--now".into(),
-                "miniboard-ipd.service".into(),
-            ],
-            vec!["systemctl".into(), "daemon-reload".into()],
-        ],
+        InitKind::Systemd => vec![vec![
+            "systemctl".into(),
+            "disable".into(),
+            "--now".into(),
+            "miniboard-ipd.service".into(),
+        ]],
         InitKind::OpenRc => vec![
             vec!["rc-service".into(), "miniboard-ipd".into(), "stop".into()],
             vec![
@@ -137,8 +138,19 @@ pub fn uninstall_commands(kind: InitKind) -> Vec<Vec<String>> {
             vec!["/etc/init.d/miniboard-ipd".into(), "stop".into()],
             vec!["/etc/init.d/miniboard-ipd".into(), "disable".into()],
         ],
-        InitKind::SysV => vec![vec!["service".into(), "miniboard-ipd".into(), "stop".into()]],
+        InitKind::SysV => vec![vec![
+            "service".into(),
+            "miniboard-ipd".into(),
+            "stop".into(),
+        ]],
         InitKind::BusyBox => vec![vec!["/etc/init.d/S99miniboard-ipd".into(), "stop".into()]],
+        _ => Vec::new(),
+    }
+}
+
+pub fn post_uninstall_commands(kind: InitKind) -> Vec<Vec<String>> {
+    match kind {
+        InitKind::Systemd => vec![vec!["systemctl".into(), "daemon-reload".into()]],
         _ => Vec::new(),
     }
 }
@@ -192,6 +204,9 @@ pub fn apply_uninstall(
     );
     ops.remove_file(&rendered.path)?;
     ops.remove_file(binary_path)?;
+    for command in post_uninstall_commands(kind) {
+        ops.run(&command)?;
+    }
     Ok(())
 }
 
@@ -235,7 +250,9 @@ impl InstallOps for RealInstallOps {
         if status.success() {
             Ok(())
         } else {
-            Err(std::io::Error::other(format!("{program} exited with {status}")))
+            Err(std::io::Error::other(format!(
+                "{program} exited with {status}"
+            )))
         }
     }
 }
@@ -381,8 +398,12 @@ mod tests {
     fn openrc_script_uses_command_args() {
         let render = render_service(InitKind::OpenRc, &spec());
         assert_eq!(render.path, "/etc/init.d/miniboard-ipd");
-        assert!(render.contents.contains("command=\"/usr/local/bin/miniboard-ipd\""));
-        assert!(render.contents.contains("command_args=\"run --interface eth0 --dhcp-fail-delay-seconds 45\""));
+        assert!(render
+            .contents
+            .contains("command=\"/usr/local/bin/miniboard-ipd\""));
+        assert!(render
+            .contents
+            .contains("command_args=\"run --interface eth0 --dhcp-fail-delay-seconds 45\""));
     }
 }
 
@@ -402,7 +423,12 @@ mod command_tests {
             Ok(())
         }
 
-        fn write_file(&mut self, path: &str, contents: &str, executable: bool) -> std::io::Result<()> {
+        fn write_file(
+            &mut self,
+            path: &str,
+            contents: &str,
+            executable: bool,
+        ) -> std::io::Result<()> {
             self.events.push(format!(
                 "write:{path}:{executable}:{}",
                 contents.contains("miniboard-ipd run")
@@ -444,13 +470,38 @@ mod command_tests {
     }
 
     #[test]
+    fn systemd_uninstall_commands_only_stop_and_disable_before_file_removal() {
+        assert_eq!(
+            uninstall_commands(InitKind::Systemd),
+            vec![vec![
+                "systemctl",
+                "disable",
+                "--now",
+                "miniboard-ipd.service"
+            ]]
+        );
+        assert_eq!(
+            post_uninstall_commands(InitKind::Systemd),
+            vec![vec!["systemctl", "daemon-reload"]]
+        );
+    }
+
+    #[test]
     fn apply_systemd_install_copies_binary_writes_unit_and_starts_service() {
         let mut ops = RecordingOps::default();
         apply_install(&request(InitKind::Systemd), &mut ops).unwrap();
 
-        assert_eq!(ops.events[0], "copy:/tmp/miniboard-ipd:/usr/local/bin/miniboard-ipd:true");
-        assert_eq!(ops.events[1], "write:/etc/systemd/system/miniboard-ipd.service:false:true");
-        assert!(ops.events.contains(&"run:systemctl daemon-reload".to_string()));
+        assert_eq!(
+            ops.events[0],
+            "copy:/tmp/miniboard-ipd:/usr/local/bin/miniboard-ipd:true"
+        );
+        assert_eq!(
+            ops.events[1],
+            "write:/etc/systemd/system/miniboard-ipd.service:false:true"
+        );
+        assert!(ops
+            .events
+            .contains(&"run:systemctl daemon-reload".to_string()));
         assert!(ops
             .events
             .contains(&"run:systemctl enable --now miniboard-ipd.service".to_string()));
@@ -476,15 +527,15 @@ mod command_tests {
         let mut ops = RecordingOps::default();
         apply_uninstall(InitKind::Systemd, "/usr/local/bin/miniboard-ipd", &mut ops).unwrap();
 
-        assert!(ops
-            .events
-            .contains(&"run:systemctl disable --now miniboard-ipd.service".to_string()));
-        assert!(ops
-            .events
-            .contains(&"remove:/etc/systemd/system/miniboard-ipd.service".to_string()));
-        assert!(ops
-            .events
-            .contains(&"remove:/usr/local/bin/miniboard-ipd".to_string()));
+        assert_eq!(
+            ops.events,
+            vec![
+                "run:systemctl disable --now miniboard-ipd.service",
+                "remove:/etc/systemd/system/miniboard-ipd.service",
+                "remove:/usr/local/bin/miniboard-ipd",
+                "run:systemctl daemon-reload",
+            ]
+        );
     }
 
     #[test]

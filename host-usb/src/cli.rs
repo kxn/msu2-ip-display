@@ -63,7 +63,9 @@ where
     I: Iterator<Item = String>,
 {
     if let Some(extra) = args.next() {
-        return Err(CliError(format!("{command} does not accept argument {extra}")));
+        return Err(CliError(format!(
+            "{command} does not accept argument {extra}"
+        )));
     }
     Ok(())
 }
@@ -83,8 +85,10 @@ where
                 let value = args
                     .next()
                     .ok_or_else(|| CliError("--interface requires a value".to_string()))?;
-                if value.is_empty() {
-                    return Err(CliError("--interface requires a non-empty value".to_string()));
+                if !is_valid_linux_interface_name(&value) {
+                    return Err(CliError(format!(
+                        "invalid interface name {value:?}; must be a non-empty Linux device name under 16 bytes without whitespace, '/' or ':'"
+                    )));
                 }
                 options.interface = Some(value);
             }
@@ -96,7 +100,9 @@ where
                     CliError("--dhcp-fail-delay-seconds requires an integer".to_string())
                 })?;
                 if seconds == 0 {
-                    return Err(CliError("--dhcp-fail-delay-seconds must be > 0".to_string()));
+                    return Err(CliError(
+                        "--dhcp-fail-delay-seconds must be > 0".to_string(),
+                    ));
                 }
                 options.dhcp_fail_delay = Duration::from_secs(seconds);
             }
@@ -105,6 +111,16 @@ where
     }
 
     Ok(options)
+}
+
+fn is_valid_linux_interface_name(value: &str) -> bool {
+    !value.is_empty()
+        && value != "."
+        && value != ".."
+        && value.len() < 16
+        && !value
+            .chars()
+            .any(|ch| ch.is_whitespace() || ch == '/' || ch == ':')
 }
 
 #[cfg(test)]
@@ -141,12 +157,7 @@ mod tests {
         assert_eq!(options.dhcp_fail_delay, Duration::from_secs(90));
         assert_eq!(
             options.service_args(),
-            [
-                "--interface",
-                "eth0",
-                "--dhcp-fail-delay-seconds",
-                "90",
-            ]
+            ["--interface", "eth0", "--dhcp-fail-delay-seconds", "90",]
         );
     }
 
@@ -160,5 +171,35 @@ mod tests {
     fn uninstall_and_status_parse_without_options() {
         assert_eq!(parse_args(["uninstall"]).unwrap(), Command::Uninstall);
         assert_eq!(parse_args(["status"]).unwrap(), Command::Status);
+    }
+
+    #[test]
+    fn install_rejects_invalid_interface_names_for_service_embedding() {
+        for value in [
+            "",
+            "eth 0",
+            "eth0/1",
+            "eth0:1",
+            ".",
+            "..",
+            "1234567890123456",
+        ] {
+            let err = parse_args(["install", "--interface", value]).unwrap_err();
+            assert!(
+                err.to_string().contains("invalid interface name"),
+                "unexpected error for {value:?}: {err}"
+            );
+        }
+    }
+
+    #[test]
+    fn install_accepts_linux_device_style_interface_names() {
+        for value in ["eth0", "enp1s0", "wlan0", "br-lan", "eth0.10", "usb0@if2"] {
+            let command = parse_args(["install", "--interface", value]).unwrap();
+            let Command::Install(options) = command else {
+                panic!("expected install command");
+            };
+            assert_eq!(options.interface.as_deref(), Some(value));
+        }
     }
 }
