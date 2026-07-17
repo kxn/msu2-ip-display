@@ -7,6 +7,7 @@ pub mod logging;
 pub mod platform;
 pub mod protocol;
 pub mod serial;
+pub mod service_install;
 
 #[cfg(test)]
 mod platform_tests {
