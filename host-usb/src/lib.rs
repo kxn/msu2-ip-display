@@ -1,10 +1,12 @@
 pub mod cli;
 pub mod daemon;
+pub mod device_scan;
 pub mod display;
 pub mod ip_detect;
 pub mod logging;
-pub mod protocol;
 pub mod platform;
+pub mod protocol;
+pub mod serial;
 
 #[cfg(test)]
 mod platform_tests {
