@@ -4,6 +4,7 @@ import { listen } from "@tauri-apps/api/event";
 type UiDeviceStatus = {
   kind: string;
   title: string;
+  device_name?: string;
   port_name?: string;
   vid_pid?: string;
   serial?: string;
@@ -73,7 +74,7 @@ function setWriteIdle(enabled: boolean): void {
 
 function renderReady(status: UiDeviceStatus): void {
   setPill("设备已连接", "ok");
-  deviceName.textContent = "CH32x035";
+  deviceName.textContent = status.device_name || "CH32x035";
   devicePort.textContent = status.port_name ?? "";
   vidPid.textContent = status.vid_pid || "-";
   serialId.textContent = status.serial || "-";
@@ -87,28 +88,48 @@ function renderReady(status: UiDeviceStatus): void {
   }
 }
 
-function renderNoDevice(): void {
+function renderNoDevice(status?: UiDeviceStatus): void {
+  const title = status?.title || "未连接";
   flashing = false;
   setPill("未检测到", "warn");
-  deviceName.textContent = "未连接";
+  deviceName.textContent = title;
   devicePort.textContent = "";
   vidPid.textContent = "-";
   serialId.textContent = "-";
-  writeTitle.textContent = "未连接";
+  writeTitle.textContent = title;
   writePercent.textContent = "";
   setWriteIdle(false);
   setProgress(0);
   setCopyVisible(false);
-  setRecord("未连接");
+  setRecord(title);
+}
+
+function renderOtherStatus(status: UiDeviceStatus): void {
+  const title = status.title || "未连接";
+  setPill(title, status.button_enabled ? "info" : "warn");
+  deviceName.textContent = title;
+  devicePort.textContent = status.port_name ?? "";
+  vidPid.textContent = status.vid_pid || "-";
+  serialId.textContent = status.serial || "-";
+  writeTitle.textContent = title;
+  writePercent.textContent = "";
+  setWriteIdle(status.button_enabled && !flashing);
+  setProgress(0);
+  setCopyVisible(false);
+  setRecord(title);
 }
 
 function renderStatus(status: UiDeviceStatus): void {
-  if (status.kind === "Ready") {
-    renderReady(status);
-    return;
+  switch (status.kind) {
+    case "Ready":
+      renderReady(status);
+      return;
+    case "NoDevice":
+      renderNoDevice(status);
+      return;
+    default:
+      renderOtherStatus(status);
   }
-
-  renderNoDevice();
 }
 
 async function scan(): Promise<void> {
