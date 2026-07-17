@@ -67,27 +67,53 @@ impl PortIo for SerialPortIo {
     }
 
     fn read_idle(&mut self, total_ms: u64, idle_ms: u64) -> AppResult<Vec<u8>> {
-        let deadline = Instant::now() + Duration::from_millis(total_ms);
-        let mut idle_deadline = Instant::now() + Duration::from_millis(idle_ms);
-        let mut out = Vec::new();
-        let mut buf = [0u8; 256];
+        read_with_idle_timeout(
+            total_ms,
+            idle_ms,
+            |buf| self.inner.read(buf),
+            std::thread::sleep,
+            Instant::now,
+        )
+    }
+}
 
-        while Instant::now() < deadline && Instant::now() < idle_deadline {
-            match self.inner.read(&mut buf) {
-                Ok(0) => std::thread::sleep(Duration::from_millis(3)),
-                Ok(n) => {
-                    out.extend_from_slice(&buf[..n]);
-                    idle_deadline = Instant::now() + Duration::from_millis(idle_ms);
-                }
-                Err(err) if err.kind() == std::io::ErrorKind::TimedOut => {
-                    std::thread::sleep(Duration::from_millis(3));
-                }
-                Err(err) => return Err(AppError::Io(err.to_string())),
-            }
+fn read_with_idle_timeout<R, S, N>(
+    total_ms: u64,
+    idle_ms: u64,
+    mut read_once: R,
+    mut sleep: S,
+    mut now: N,
+) -> AppResult<Vec<u8>>
+where
+    R: FnMut(&mut [u8]) -> std::io::Result<usize>,
+    S: FnMut(Duration),
+    N: FnMut() -> Instant,
+{
+    let deadline = now() + Duration::from_millis(total_ms);
+    let mut idle_deadline: Option<Instant> = None;
+    let mut out = Vec::new();
+    let mut buf = [0u8; 256];
+
+    loop {
+        let current = now();
+        if current >= deadline || idle_deadline.is_some_and(|idle| current >= idle) {
+            break;
         }
 
-        Ok(out)
+        match read_once(&mut buf) {
+            Ok(0) => sleep(Duration::from_millis(3)),
+            Ok(n) => {
+                out.extend_from_slice(&buf[..n]);
+                idle_deadline = Some(now() + Duration::from_millis(idle_ms));
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::TimedOut => {
+                sleep(Duration::from_millis(3));
+            }
+            Err(err) => return Err(AppError::Io(err.to_string())),
+        }
     }
+
+    Ok(out)
 }
 
 pub fn matches_target_usb(vid: Option<u16>, pid: Option<u16>, text: Option<&str>) -> bool {
@@ -174,6 +200,7 @@ pub fn handshake<P: PortIo>(port: &mut P) -> AppResult<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::{cell::Cell, io};
     use serialport::{DataBits, FlowControl, Parity, StopBits};
 
     #[derive(Default)]
@@ -273,5 +300,32 @@ mod tests {
             handshake(&mut port),
             Err(AppError::HandshakeFailed)
         ));
+    }
+
+    #[test]
+    fn serial_read_waits_for_first_byte_before_starting_idle_timeout() {
+        let clock_ms = Cell::new(0_u64);
+        let payload = crate::protocol::HANDSHAKE.to_vec();
+        let sent = Cell::new(false);
+        let base = Instant::now();
+
+        let reply = read_with_idle_timeout(
+            200,
+            40,
+            |buf| {
+                if !sent.get() && clock_ms.get() >= 60 {
+                    buf[..payload.len()].copy_from_slice(&payload);
+                    sent.set(true);
+                    Ok(payload.len())
+                } else {
+                    Err(io::Error::new(io::ErrorKind::TimedOut, "no bytes yet"))
+                }
+            },
+            |duration| clock_ms.set(clock_ms.get() + duration.as_millis() as u64),
+            || base + Duration::from_millis(clock_ms.get()),
+        )
+        .unwrap();
+
+        assert_eq!(reply, payload);
     }
 }
