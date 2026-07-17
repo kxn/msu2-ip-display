@@ -1,0 +1,287 @@
+:root {
+  font-family: "Microsoft YaHei", "Segoe UI", system-ui, sans-serif;
+  color: #1b2327;
+  background: #f5f7f8;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  min-width: 0;
+  min-height: 0;
+}
+
+body {
+  margin: 0;
+  background: #f5f7f8;
+}
+
+button {
+  font: inherit;
+}
+
+.shell {
+  width: min(944px, 100%);
+  margin: 0 auto;
+  padding: 32px 24px 24px;
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  border-bottom: 1px solid #dce2e5;
+  padding-bottom: 22px;
+}
+
+h1 {
+  margin: 0;
+  font-size: 25px;
+  line-height: 1.2;
+  letter-spacing: 0;
+}
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  height: 30px;
+  padding: 0 14px;
+  border-radius: 15px;
+  font-size: 15px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.pill::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  margin-right: 8px;
+  border-radius: 50%;
+}
+
+.pill.ok {
+  color: #1d9054;
+  background: #e2f6eb;
+}
+
+.pill.ok::before {
+  background: #1d9054;
+}
+
+.pill.warn {
+  color: #a87020;
+  background: #fbf1de;
+}
+
+.pill.warn::before {
+  background: #a87020;
+}
+
+.pill.info {
+  color: #265eaa;
+  background: #e6eefa;
+}
+
+.pill.info::before {
+  background: #265eaa;
+}
+
+.pill.error {
+  color: #ba3636;
+  background: #fcebeb;
+}
+
+.pill.error::before {
+  background: #ba3636;
+}
+
+.panel {
+  margin-top: 28px;
+  padding: 24px;
+  border: 1px solid #dce2e5;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.panel-label {
+  color: #606c72;
+  font-size: 17px;
+  font-weight: 700;
+}
+
+.device-row,
+.write-row {
+  display: flex;
+  align-items: center;
+  gap: 28px;
+  margin-top: 16px;
+}
+
+.device-copy,
+.write-copy {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.usb-icon {
+  position: relative;
+  flex: 0 0 auto;
+  width: 34px;
+  height: 44px;
+}
+
+.usb-icon::before {
+  content: "↔";
+  color: #1d9054;
+  font-size: 34px;
+  line-height: 44px;
+}
+
+.device-name,
+.write-title {
+  font-size: 31px;
+  line-height: 1.2;
+  font-weight: 700;
+}
+
+.device-port,
+.percent {
+  margin-top: 4px;
+  color: #1d9054;
+  font-size: 19px;
+  font-weight: 700;
+}
+
+.secondary,
+.primary,
+.link-button {
+  border-radius: 8px;
+  border: 1px solid #dce2e5;
+  background: #fff;
+  color: #1b2327;
+  font-weight: 700;
+}
+
+.secondary,
+.primary {
+  cursor: pointer;
+}
+
+.primary {
+  margin-left: auto;
+  min-width: 180px;
+  height: 60px;
+  padding: 0 34px;
+  border: none;
+  background: #111d1c;
+  color: #fff;
+}
+
+.primary:disabled {
+  background: #e8ecee;
+  color: #859197;
+  cursor: default;
+}
+
+.secondary {
+  margin-left: auto;
+  height: 42px;
+  padding: 0 24px;
+}
+
+.progress-track {
+  height: 16px;
+  margin-top: 28px;
+  overflow: hidden;
+  border-radius: 8px;
+  background: #e7ecef;
+}
+
+.progress-fill {
+  width: 0%;
+  height: 100%;
+  border-radius: 8px;
+  background: #1d9054;
+  transition: width 180ms ease;
+}
+
+.record-line {
+  display: flex;
+  align-items: center;
+  gap: 22px;
+  min-height: 52px;
+  margin-top: 26px;
+  padding: 10px 24px;
+  border: 1px solid #dce2e5;
+  border-radius: 8px;
+  background: #fff;
+}
+
+#recordTime {
+  color: #869197;
+  white-space: nowrap;
+}
+
+#recordText {
+  min-width: 0;
+}
+
+.link-button {
+  margin-left: auto;
+  height: 38px;
+  padding: 0 18px;
+  white-space: nowrap;
+}
+
+.hidden {
+  display: none;
+}
+
+@media (max-width: 920px) {
+  .shell {
+    padding: 24px 20px 20px;
+  }
+
+  .device-row,
+  .write-row,
+  .record-line {
+    flex-wrap: wrap;
+    gap: 16px;
+  }
+
+  .secondary,
+  .primary,
+  .link-button {
+    margin-left: 0;
+  }
+
+  .primary {
+    width: 100%;
+    min-width: 0;
+  }
+}
+
+@media (max-width: 640px) {
+  .panel {
+    padding: 20px;
+  }
+
+  .device-name,
+  .write-title {
+    font-size: 27px;
+  }
+
+  .device-port,
+  .percent {
+    font-size: 17px;
+  }
+}

@@ -1,15 +1,26 @@
-# MSU2 Flasher
+# Miniboard
 
-Windows desktop app for writing the fixed MSU2 USB screen assets.
+MSU2 MINI / MSU2 系列 USB 小屏调研与刷写工具仓库。
 
-## Use
+## 目录
 
-1. Plug in the MSU2 screen.
-2. Wait until the app shows the device.
-3. Click `写入`.
-4. Wait for completion.
+- `flasher/`: 当前可用的 MSU2 MINI Tauri/Rust 刷写器。
+- `host-usb/`: 未来 host-side USB/串口通信程序预留目录。
+- `docs/`: 仓库内整理后的文档。
+- `references/`: 去重后的官方资料、逆向资料、验证日志和生成资产。
 
-## Notes
+## 常用命令
 
-- Close other serial tools before writing.
-- If writing fails, click `复制记录` and keep the copied text for debugging.
+```powershell
+cd flasher
+npm run build
+```
+
+```powershell
+cd flasher/src-tauri
+cargo test
+```
+
+## 当前结论
+
+当前 flasher 是局部固定资产刷写器，不是完整 1MB 出厂 Flash 恢复工具。协议和布局请先看 `docs/msu2-protocol-and-flash-layout.md`。
