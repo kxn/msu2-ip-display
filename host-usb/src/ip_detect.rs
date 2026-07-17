@@ -77,7 +77,10 @@ pub fn select_ipv4(snapshot: &NetworkSnapshot, config: &SelectionConfig) -> Sele
 
     match normal.len() {
         0 => {
-            if candidates.iter().any(|candidate| is_link_local(candidate.address)) {
+            if candidates
+                .iter()
+                .any(|candidate| !is_virtual_interface(&candidate.interface) && is_link_local(candidate.address))
+            {
                 Selection::FailureCandidate
             } else {
                 Selection::Pending
@@ -188,6 +191,16 @@ mod tests {
     fn virtual_interfaces_are_ignored_for_fallback() {
         let snapshot = NetworkSnapshot {
             addresses: vec![addr("docker0", [172, 17, 0, 1], false)],
+            routes: vec![],
+        };
+
+        assert_eq!(select_ipv4(&snapshot, &SelectionConfig::default()), Selection::Pending);
+    }
+
+    #[test]
+    fn virtual_link_local_only_is_pending_for_fallback() {
+        let snapshot = NetworkSnapshot {
+            addresses: vec![addr("docker0", [169, 254, 1, 2], true)],
             routes: vec![],
         };
 
