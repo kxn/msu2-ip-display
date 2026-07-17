@@ -163,6 +163,7 @@ pub fn uninstall_commands(kind: InitKind) -> Vec<Vec<String>> {
             vec!["service".into(), "miniboard-ipd".into(), "stop".into()],
             vec![
                 "update-rc.d".into(),
+                "-f".into(),
                 "miniboard-ipd".into(),
                 "remove".into(),
             ],
@@ -578,7 +579,7 @@ mod command_tests {
             uninstall_commands(InitKind::SysVUpdateRcD),
             vec![
                 vec!["service", "miniboard-ipd", "stop"],
-                vec!["update-rc.d", "miniboard-ipd", "remove"],
+                vec!["update-rc.d", "-f", "miniboard-ipd", "remove"],
             ]
         );
     }
@@ -642,6 +643,27 @@ mod command_tests {
                 "remove:/etc/systemd/system/miniboard-ipd.service",
                 "remove:/usr/local/bin/miniboard-ipd",
                 "run:systemctl daemon-reload",
+            ]
+        );
+    }
+
+    #[test]
+    fn apply_sysv_update_rc_d_uninstall_forces_remove_before_deleting_files() {
+        let mut ops = RecordingOps::default();
+        apply_uninstall(
+            InitKind::SysVUpdateRcD,
+            "/usr/local/bin/miniboard-ipd",
+            &mut ops,
+        )
+        .unwrap();
+
+        assert_eq!(
+            ops.events,
+            vec![
+                "run:service miniboard-ipd stop",
+                "run:update-rc.d -f miniboard-ipd remove",
+                "remove:/etc/init.d/miniboard-ipd",
+                "remove:/usr/local/bin/miniboard-ipd",
             ]
         );
     }
