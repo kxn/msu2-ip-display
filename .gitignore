@@ -18,6 +18,7 @@ dist-ssr
 # Local Codex/research scratch space
 .superpowers/
 codex-artifacts/
+.worktrees/
 
 # Editor directories and files
 .vscode/*
