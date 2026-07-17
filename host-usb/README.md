@@ -14,4 +14,21 @@ miniboard-ipd run --interface eth0
 miniboard-ipd install --interface eth0 --dhcp-fail-delay-seconds 45
 ```
 
-v1 has no config file. Options passed to `install` are embedded into the installed service/init script.
+## Build
+
+```bash
+cargo test
+cargo build --release
+```
+
+## Commands
+
+```bash
+miniboard-ipd run
+miniboard-ipd run --interface eth0
+miniboard-ipd install --interface eth0 --dhcp-fail-delay-seconds 45
+miniboard-ipd uninstall
+miniboard-ipd status
+```
+
+`install` stores command-line options in the generated service/init command. v1 does not read a config file.

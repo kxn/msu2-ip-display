@@ -21,6 +21,11 @@ cd flasher/src-tauri
 cargo test
 ```
 
+```powershell
+cd host-usb
+cargo test
+```
+
 ## 当前结论
 
 当前 flasher 是局部固定资产刷写器，不是完整 1MB 出厂 Flash 恢复工具。协议和布局请先看 `docs/msu2-protocol-and-flash-layout.md`。

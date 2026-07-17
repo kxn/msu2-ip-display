@@ -1,3 +1,5 @@
+use std::path::{Path, PathBuf};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InitKind {
     Systemd,
@@ -37,6 +39,20 @@ pub struct ServiceRender {
     pub contents: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InstallRequest {
+    pub source_binary_path: PathBuf,
+    pub spec: InstallSpec,
+    pub init: InitKind,
+}
+
+pub trait InstallOps {
+    fn copy_file(&mut self, from: &Path, to: &str, executable: bool) -> std::io::Result<()>;
+    fn write_file(&mut self, path: &str, contents: &str, executable: bool) -> std::io::Result<()>;
+    fn remove_file(&mut self, path: &str) -> std::io::Result<()>;
+    fn run(&mut self, command: &[String]) -> std::io::Result<()>;
+}
+
 pub fn detect_init(probe: &InitProbe) -> InitKind {
     if probe.has_openwrt_release || probe.has_procd {
         InitKind::OpenWrtProcd
@@ -65,6 +81,179 @@ pub fn render_service(kind: InitKind, spec: &InstallSpec) -> ServiceRender {
         InitKind::DinitTemplate => render_template("miniboard-ipd.dinit", spec),
         InitKind::Unknown => render_template("miniboard-ipd.manual", spec),
     }
+}
+
+pub fn install_commands(kind: InitKind) -> Vec<Vec<String>> {
+    match kind {
+        InitKind::Systemd => vec![
+            vec!["systemctl".into(), "daemon-reload".into()],
+            vec![
+                "systemctl".into(),
+                "enable".into(),
+                "--now".into(),
+                "miniboard-ipd.service".into(),
+            ],
+        ],
+        InitKind::OpenRc => vec![
+            vec![
+                "rc-update".into(),
+                "add".into(),
+                "miniboard-ipd".into(),
+                "default".into(),
+            ],
+            vec!["rc-service".into(), "miniboard-ipd".into(), "start".into()],
+        ],
+        InitKind::OpenWrtProcd => vec![
+            vec!["/etc/init.d/miniboard-ipd".into(), "enable".into()],
+            vec!["/etc/init.d/miniboard-ipd".into(), "start".into()],
+        ],
+        InitKind::SysV => vec![vec!["service".into(), "miniboard-ipd".into(), "start".into()]],
+        InitKind::BusyBox => vec![vec!["/etc/init.d/S99miniboard-ipd".into(), "start".into()]],
+        _ => Vec::new(),
+    }
+}
+
+pub fn uninstall_commands(kind: InitKind) -> Vec<Vec<String>> {
+    match kind {
+        InitKind::Systemd => vec![
+            vec![
+                "systemctl".into(),
+                "disable".into(),
+                "--now".into(),
+                "miniboard-ipd.service".into(),
+            ],
+            vec!["systemctl".into(), "daemon-reload".into()],
+        ],
+        InitKind::OpenRc => vec![
+            vec!["rc-service".into(), "miniboard-ipd".into(), "stop".into()],
+            vec![
+                "rc-update".into(),
+                "del".into(),
+                "miniboard-ipd".into(),
+                "default".into(),
+            ],
+        ],
+        InitKind::OpenWrtProcd => vec![
+            vec!["/etc/init.d/miniboard-ipd".into(), "stop".into()],
+            vec!["/etc/init.d/miniboard-ipd".into(), "disable".into()],
+        ],
+        InitKind::SysV => vec![vec!["service".into(), "miniboard-ipd".into(), "stop".into()]],
+        InitKind::BusyBox => vec![vec!["/etc/init.d/S99miniboard-ipd".into(), "stop".into()]],
+        _ => Vec::new(),
+    }
+}
+
+pub fn status_command(kind: InitKind) -> Vec<String> {
+    match kind {
+        InitKind::Systemd => vec![
+            "systemctl".into(),
+            "status".into(),
+            "--no-pager".into(),
+            "miniboard-ipd.service".into(),
+        ],
+        InitKind::OpenRc => vec!["rc-service".into(), "miniboard-ipd".into(), "status".into()],
+        InitKind::OpenWrtProcd => vec!["/etc/init.d/miniboard-ipd".into(), "status".into()],
+        InitKind::SysV => vec!["service".into(), "miniboard-ipd".into(), "status".into()],
+        InitKind::BusyBox => vec!["pgrep".into(), "-af".into(), "miniboard-ipd".into()],
+        _ => vec!["pgrep".into(), "-af".into(), "miniboard-ipd".into()],
+    }
+}
+
+pub fn apply_install(_request: &InstallRequest, _ops: &mut dyn InstallOps) -> std::io::Result<()> {
+    let request = _request;
+    let ops = _ops;
+    let rendered = render_service(request.init, &request.spec);
+    ops.copy_file(&request.source_binary_path, &request.spec.binary_path, true)?;
+    ops.write_file(
+        &rendered.path,
+        &rendered.contents,
+        service_needs_executable(request.init),
+    )?;
+    for command in install_commands(request.init) {
+        ops.run(&command)?;
+    }
+    Ok(())
+}
+
+pub fn apply_uninstall(
+    kind: InitKind,
+    binary_path: &str,
+    ops: &mut dyn InstallOps,
+) -> std::io::Result<()> {
+    for command in uninstall_commands(kind) {
+        ops.run(&command)?;
+    }
+    let rendered = render_service(
+        kind,
+        &InstallSpec {
+            binary_path: binary_path.to_string(),
+            service_args: Vec::new(),
+        },
+    );
+    ops.remove_file(&rendered.path)?;
+    ops.remove_file(binary_path)?;
+    Ok(())
+}
+
+pub fn run_status(kind: InitKind, ops: &mut dyn InstallOps) -> std::io::Result<()> {
+    ops.run(&status_command(kind))
+}
+
+fn service_needs_executable(kind: InitKind) -> bool {
+    matches!(
+        kind,
+        InitKind::OpenRc | InitKind::OpenWrtProcd | InitKind::SysV | InitKind::BusyBox
+    )
+}
+
+pub struct RealInstallOps;
+
+impl InstallOps for RealInstallOps {
+    fn copy_file(&mut self, from: &Path, to: &str, executable: bool) -> std::io::Result<()> {
+        std::fs::copy(from, to)?;
+        set_executable_if_needed(to, executable)
+    }
+
+    fn write_file(&mut self, path: &str, contents: &str, executable: bool) -> std::io::Result<()> {
+        std::fs::write(path, contents)?;
+        set_executable_if_needed(path, executable)
+    }
+
+    fn remove_file(&mut self, path: &str) -> std::io::Result<()> {
+        match std::fs::remove_file(path) {
+            Ok(()) => Ok(()),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(err) => Err(err),
+        }
+    }
+
+    fn run(&mut self, command: &[String]) -> std::io::Result<()> {
+        let Some((program, args)) = command.split_first() else {
+            return Ok(());
+        };
+        let status = std::process::Command::new(program).args(args).status()?;
+        if status.success() {
+            Ok(())
+        } else {
+            Err(std::io::Error::other(format!("{program} exited with {status}")))
+        }
+    }
+}
+
+#[cfg(target_family = "unix")]
+fn set_executable_if_needed(path: &str, executable: bool) -> std::io::Result<()> {
+    if !executable {
+        return Ok(());
+    }
+    use std::os::unix::fs::PermissionsExt;
+    let mut permissions = std::fs::metadata(path)?.permissions();
+    permissions.set_mode(0o755);
+    std::fs::set_permissions(path, permissions)
+}
+
+#[cfg(not(target_family = "unix"))]
+fn set_executable_if_needed(_path: &str, _executable: bool) -> std::io::Result<()> {
+    Ok(())
 }
 
 fn command_line(spec: &InstallSpec) -> String {
@@ -194,5 +383,118 @@ mod tests {
         assert_eq!(render.path, "/etc/init.d/miniboard-ipd");
         assert!(render.contents.contains("command=\"/usr/local/bin/miniboard-ipd\""));
         assert!(render.contents.contains("command_args=\"run --interface eth0 --dhcp-fail-delay-seconds 45\""));
+    }
+}
+
+#[cfg(test)]
+mod command_tests {
+    use super::*;
+
+    #[derive(Default)]
+    struct RecordingOps {
+        events: Vec<String>,
+    }
+
+    impl InstallOps for RecordingOps {
+        fn copy_file(&mut self, from: &Path, to: &str, executable: bool) -> std::io::Result<()> {
+            self.events
+                .push(format!("copy:{}:{to}:{executable}", from.display()));
+            Ok(())
+        }
+
+        fn write_file(&mut self, path: &str, contents: &str, executable: bool) -> std::io::Result<()> {
+            self.events.push(format!(
+                "write:{path}:{executable}:{}",
+                contents.contains("miniboard-ipd run")
+            ));
+            Ok(())
+        }
+
+        fn remove_file(&mut self, path: &str) -> std::io::Result<()> {
+            self.events.push(format!("remove:{path}"));
+            Ok(())
+        }
+
+        fn run(&mut self, command: &[String]) -> std::io::Result<()> {
+            self.events.push(format!("run:{}", command.join(" ")));
+            Ok(())
+        }
+    }
+
+    fn request(kind: InitKind) -> InstallRequest {
+        InstallRequest {
+            source_binary_path: PathBuf::from("/tmp/miniboard-ipd"),
+            spec: InstallSpec {
+                binary_path: "/usr/local/bin/miniboard-ipd".to_string(),
+                service_args: vec!["--interface".to_string(), "eth0".to_string()],
+            },
+            init: kind,
+        }
+    }
+
+    #[test]
+    fn systemd_install_commands_reload_enable_and_start() {
+        assert_eq!(
+            install_commands(InitKind::Systemd),
+            vec![
+                vec!["systemctl", "daemon-reload"],
+                vec!["systemctl", "enable", "--now", "miniboard-ipd.service"],
+            ]
+        );
+    }
+
+    #[test]
+    fn apply_systemd_install_copies_binary_writes_unit_and_starts_service() {
+        let mut ops = RecordingOps::default();
+        apply_install(&request(InitKind::Systemd), &mut ops).unwrap();
+
+        assert_eq!(ops.events[0], "copy:/tmp/miniboard-ipd:/usr/local/bin/miniboard-ipd:true");
+        assert_eq!(ops.events[1], "write:/etc/systemd/system/miniboard-ipd.service:false:true");
+        assert!(ops.events.contains(&"run:systemctl daemon-reload".to_string()));
+        assert!(ops
+            .events
+            .contains(&"run:systemctl enable --now miniboard-ipd.service".to_string()));
+    }
+
+    #[test]
+    fn apply_openwrt_install_writes_executable_init_script() {
+        let mut ops = RecordingOps::default();
+        apply_install(&request(InitKind::OpenWrtProcd), &mut ops).unwrap();
+
+        assert!(ops
+            .events
+            .iter()
+            .any(|event| event == "write:/etc/init.d/miniboard-ipd:true:true"));
+        assert!(ops
+            .events
+            .iter()
+            .any(|event| event == "run:/etc/init.d/miniboard-ipd enable"));
+    }
+
+    #[test]
+    fn uninstall_stops_service_removes_script_and_binary() {
+        let mut ops = RecordingOps::default();
+        apply_uninstall(InitKind::Systemd, "/usr/local/bin/miniboard-ipd", &mut ops).unwrap();
+
+        assert!(ops
+            .events
+            .contains(&"run:systemctl disable --now miniboard-ipd.service".to_string()));
+        assert!(ops
+            .events
+            .contains(&"remove:/etc/systemd/system/miniboard-ipd.service".to_string()));
+        assert!(ops
+            .events
+            .contains(&"remove:/usr/local/bin/miniboard-ipd".to_string()));
+    }
+
+    #[test]
+    fn status_runs_init_specific_command() {
+        let mut ops = RecordingOps::default();
+        run_status(InitKind::Systemd, &mut ops).unwrap();
+
+        assert_eq!(
+            ops.events,
+            vec!["run:systemctl status --no-pager miniboard-ipd.service"]
+        );
     }
 }
