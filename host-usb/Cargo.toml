@@ -1,0 +1,8 @@
+[package]
+name = "miniboard-ipd"
+version = "0.1.0"
+edition = "2021"
+description = "Linux daemon that displays host IPv4 on an MSU2 MINI USB screen"
+
+[dependencies]
+libc = "0.2"
