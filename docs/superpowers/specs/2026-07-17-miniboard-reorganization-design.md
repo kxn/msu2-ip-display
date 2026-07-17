@@ -12,7 +12,7 @@ Organize the current MSU2 MINI flasher research workspace into a maintainable re
 
 The repository root currently contains the Tauri/Vite/Rust flasher project, official vendor资料 under `data/`, earlier reverse-engineering and build artifacts under `codex-artifacts/`, and root-level vendor binaries/PDFs. The actual flasher code is the tracked Vite/Tauri project made up of `src/`, `src-tauri/`, `index.html`, `package.json`, `package-lock.json`, `tsconfig.json`, and `vite.config.ts`.
 
-The current flasher writes fixed embedded assets to a connected MSU2 MINI device. It has been hardware-verified on `COM4` with VID/PID `1A86:FE0C`, serial settings `19200 8N1`, handshake bytes `00 4D 53 4E 43 4E`, and a full 3800-page flash write followed by page 0 preview.
+The current flasher writes fixed embedded assets to a connected MSU2 MINI device. It has been hardware-verified on `COM4` with VID/PID `1A86:FE0C`, handshake bytes `00 4D 53 4E 43 4E`, and a full 3800-page flash write followed by page 0 preview. Later hardware probing also confirmed the official high-speed serial path, `921600 8N1` with RTS/CTS enabled.
 
 ## Target Layout
 
@@ -70,8 +70,7 @@ Rules:
 
 The new docs should correct or qualify earlier reverse-engineered assumptions:
 
-- The current flasher has a verified `19200 8N1` path for MSU2 MINI and should not be changed without new hardware testing.
-- The official 1.47-inch and 2.8-inch reference Python code opens serial at `921600` with RTS/CTS enabled, so future host-side code should support per-device or negotiated serial settings instead of assuming `19200`.
+- Earlier reverse-engineering used a verified `19200 8N1` path, but the official 1.47-inch and 2.8-inch reference Python code opens serial at `921600` with RTS/CTS enabled, and that high-speed mode has now been confirmed on the current MINI. Future host-side code should still support per-device or negotiated serial settings instead of assuming one value for every model or firmware.
 - Flash storage is 1024KB with 4096 pages of 256 bytes each.
 - The MINI/160x80 color image size is `160 * 80 * 2 = 25600` bytes, or 100 flash pages.
 - The flasher performs a partial fixed asset write, not a full 1MB factory flash restore.

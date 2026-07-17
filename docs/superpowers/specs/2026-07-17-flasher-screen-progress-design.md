@@ -2,7 +2,7 @@
 
 ## Goal
 
-When the user starts flashing an MSU2 MINI, the device screen should visibly switch to a flashing status. If the firmware supports partial LCD writes on the current MINI path, the screen should also show coarse progress without repeatedly refreshing the whole 160x80 display.
+When the user starts flashing an MSU2 MINI, the device screen should visibly switch to a flashing status. If the firmware supports partial LCD writes on the current MINI path, the screen should also show progress without repeatedly refreshing the whole 160x80 display during flashing.
 
 ## Sources
 
@@ -75,17 +75,18 @@ The Rust backend should use pre-rendered RGB565 status fragments for Chinese tex
 
 The implementation should avoid full-screen direct LCD refreshes during flashing.
 
-Initial status may update only the regions needed for status:
+Initial status should write one full `160x80` status image:
 
-- Title panel
-- Percent panel
-- Progress bar outline
+- This deliberately clears any previous device UI before progress begins.
+- The one-time full-screen write happens before flash page writes start.
+- If it fails, screen status is disabled and flashing continues.
 
-Progress updates should be coarse and incremental:
+Progress updates should remain incremental:
 
-- Do not update the screen for every flash page.
-- Only update when the displayed bar advances by at least one pixel, and cap updates to percentage changes that are useful to a human.
+- Update only when the displayed percent changes.
+- Refresh only the pre-rendered percentage panel and the newly filled green strip inside the progress bar.
 - Prefer updating only the newly filled green strip inside the progress bar.
+- For direct LCD region writes, do not wait after `LCD_Set_XY` or `LCD_Set_Size`; only wait for the `LCD_ADD` acknowledgement, matching the official Python reference behavior.
 - If text percentage updates are too expensive or unstable on hardware, keep the bar-only progress and leave the desktop UI as the exact progress source.
 
 ## Flashing Flow
@@ -108,7 +109,8 @@ Automated tests must cover:
 
 - New packet encodings for `LCD_ADD` and `LCD_DATA`.
 - Direct LCD region writes chunk data into 256-byte LCD data packets.
-- Screen status progress only writes incremental fill regions.
+- Screen status start writes a full initial status image so stale device content is cleared.
+- Screen status progress writes only the percentage panel and incremental fill regions.
 - Screen status disables itself after an LCD update failure.
 - Existing flash write behavior and page preview behavior remain unchanged.
 

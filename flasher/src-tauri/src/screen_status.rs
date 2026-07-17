@@ -2,10 +2,20 @@ use crate::device::PortIo;
 use crate::flasher::{write_lcd_region, RetryPolicy};
 
 const GREEN: (u8, u8, u8) = (51, 255, 127);
+const SCREEN_WIDTH: u16 = 160;
+const SCREEN_HEIGHT: u16 = 80;
 const PROGRESS_INNER_X: u16 = 26;
 const PROGRESS_INNER_Y: u16 = 62;
 const PROGRESS_INNER_WIDTH: u16 = 108;
 const PROGRESS_INNER_HEIGHT: u16 = 4;
+const PERCENT_X: u16 = 62;
+const PERCENT_Y: u16 = 42;
+const PERCENT_WIDTH: u16 = 36;
+const PERCENT_HEIGHT: u16 = 13;
+const PERCENT_BYTES: usize = (PERCENT_WIDTH as usize) * (PERCENT_HEIGHT as usize) * 2;
+const INITIAL_SCREEN: &[u8] = include_bytes!("../assets/flash_status_screen_initial.rgb565be");
+const DONE_SCREEN: &[u8] = include_bytes!("../assets/flash_status_screen_done.rgb565be");
+const PERCENT_STRIP: &[u8] = include_bytes!("../assets/flash_status_percent_strip.rgb565be");
 
 struct RegionAsset {
     x: u16,
@@ -15,74 +25,26 @@ struct RegionAsset {
     bytes: &'static [u8],
 }
 
-const TITLE: RegionAsset = RegionAsset {
-    x: 33,
-    y: 16,
-    width: 94,
-    height: 28,
-    bytes: include_bytes!("../assets/flash_status_title.rgb565be"),
+const FULL_INITIAL_SCREEN: RegionAsset = RegionAsset {
+    x: 0,
+    y: 0,
+    width: SCREEN_WIDTH,
+    height: SCREEN_HEIGHT,
+    bytes: INITIAL_SCREEN,
 };
 
-const PROGRESS_FRAME: RegionAsset = RegionAsset {
-    x: 24,
-    y: 60,
-    width: 112,
-    height: 8,
-    bytes: include_bytes!("../assets/flash_status_progress_frame.rgb565be"),
-};
-
-const PERCENT_000: RegionAsset = RegionAsset {
-    x: 62,
-    y: 42,
-    width: 36,
-    height: 13,
-    bytes: include_bytes!("../assets/flash_status_percent_000.rgb565be"),
-};
-
-const PERCENT_025: RegionAsset = RegionAsset {
-    x: 62,
-    y: 42,
-    width: 36,
-    height: 13,
-    bytes: include_bytes!("../assets/flash_status_percent_025.rgb565be"),
-};
-
-const PERCENT_050: RegionAsset = RegionAsset {
-    x: 62,
-    y: 42,
-    width: 36,
-    height: 13,
-    bytes: include_bytes!("../assets/flash_status_percent_050.rgb565be"),
-};
-
-const PERCENT_075: RegionAsset = RegionAsset {
-    x: 62,
-    y: 42,
-    width: 36,
-    height: 13,
-    bytes: include_bytes!("../assets/flash_status_percent_075.rgb565be"),
-};
-
-const PERCENT_100: RegionAsset = RegionAsset {
-    x: 62,
-    y: 42,
-    width: 36,
-    height: 13,
-    bytes: include_bytes!("../assets/flash_status_percent_100.rgb565be"),
-};
-
-const DONE: RegionAsset = RegionAsset {
-    x: 34,
-    y: 16,
-    width: 94,
-    height: 44,
-    bytes: include_bytes!("../assets/flash_status_done.rgb565be"),
+const FULL_DONE_SCREEN: RegionAsset = RegionAsset {
+    x: 0,
+    y: 0,
+    width: SCREEN_WIDTH,
+    height: SCREEN_HEIGHT,
+    bytes: DONE_SCREEN,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ScreenStatus {
     enabled: bool,
-    last_bucket: Option<u8>,
+    last_percent: Option<u8>,
     last_fill_px: u16,
 }
 
@@ -90,7 +52,7 @@ impl ScreenStatus {
     pub fn probe<P: PortIo>(port: &mut P) -> Self {
         let mut status = Self {
             enabled: true,
-            last_bucket: None,
+            last_percent: None,
             last_fill_px: 0,
         };
         let black_pixel = [0x00, 0x00];
@@ -103,11 +65,9 @@ impl ScreenStatus {
     }
 
     pub fn start<P: PortIo>(&mut self, port: &mut P) {
-        self.write_asset(port, &TITLE);
-        self.write_asset(port, &PERCENT_000);
-        self.write_asset(port, &PROGRESS_FRAME);
+        self.write_asset(port, &FULL_INITIAL_SCREEN);
         if self.enabled {
-            self.last_bucket = Some(0);
+            self.last_percent = Some(0);
             self.last_fill_px = 0;
         }
     }
@@ -117,17 +77,24 @@ impl ScreenStatus {
             return;
         }
 
-        let bucket = percent_bucket(percent);
-        if self.last_bucket == Some(bucket) {
+        let percent = percent.min(100);
+        if self.last_percent == Some(percent) {
             return;
         }
 
-        self.write_asset(port, percent_asset(bucket));
+        self.write_region(
+            port,
+            PERCENT_X,
+            PERCENT_Y,
+            PERCENT_WIDTH,
+            PERCENT_HEIGHT,
+            percent_panel(percent),
+        );
         if !self.enabled {
             return;
         }
 
-        let next_fill_px = fill_pixels(bucket);
+        let next_fill_px = fill_pixels(percent);
         if next_fill_px > self.last_fill_px {
             let delta = next_fill_px - self.last_fill_px;
             let fill = solid_rgb565(delta, PROGRESS_INNER_HEIGHT, GREEN);
@@ -145,11 +112,11 @@ impl ScreenStatus {
             self.last_fill_px = next_fill_px;
         }
 
-        self.last_bucket = Some(bucket);
+        self.last_percent = Some(percent);
     }
 
     pub fn finish<P: PortIo>(&mut self, port: &mut P) {
-        self.write_asset(port, &DONE);
+        self.write_asset(port, &FULL_DONE_SCREEN);
     }
 
     fn write_asset<P: PortIo>(&mut self, port: &mut P, asset: &RegionAsset) {
@@ -191,28 +158,13 @@ impl ScreenStatus {
     }
 }
 
-fn percent_bucket(percent: u8) -> u8 {
-    match percent {
-        100..=u8::MAX => 100,
-        75..=99 => 75,
-        50..=74 => 50,
-        25..=49 => 25,
-        _ => 0,
-    }
+fn percent_panel(percent: u8) -> &'static [u8] {
+    let start = (percent.min(100) as usize) * PERCENT_BYTES;
+    &PERCENT_STRIP[start..start + PERCENT_BYTES]
 }
 
-fn percent_asset(bucket: u8) -> &'static RegionAsset {
-    match bucket {
-        100 => &PERCENT_100,
-        75 => &PERCENT_075,
-        50 => &PERCENT_050,
-        25 => &PERCENT_025,
-        _ => &PERCENT_000,
-    }
-}
-
-fn fill_pixels(bucket: u8) -> u16 {
-    ((PROGRESS_INNER_WIDTH as u32 * bucket as u32) / 100) as u16
+fn fill_pixels(percent: u8) -> u16 {
+    ((PROGRESS_INNER_WIDTH as u32 * percent.min(100) as u32) / 100) as u16
 }
 
 fn solid_rgb565(width: u16, height: u16, (r, g, b): (u8, u8, u8)) -> Vec<u8> {
@@ -303,24 +255,40 @@ mod tests {
     }
 
     #[test]
-    fn progress_updates_only_when_bucket_changes() {
+    fn start_writes_full_status_screen_first() {
+        let mut port = MockPort::default();
+        let mut status = ScreenStatus::probe(&mut port);
+        let writes_after_probe = port.writes.len();
+
+        status.start(&mut port);
+
+        let start_writes = &port.writes[writes_after_probe..];
+        assert_eq!(start_writes[0], vec![0x02, 0x00, 0x00, 0x00, 0x00, 0x00]);
+        assert_eq!(start_writes[1], vec![0x02, 0x01, 0x00, 0xa0, 0x00, 0x50]);
+        assert_eq!(start_writes[2], vec![0x02, 0x03, 0x07, 0x00, 0x00, 0x00]);
+        assert_eq!(start_writes.len(), 103);
+    }
+
+    #[test]
+    fn progress_updates_on_each_percent_change() {
         let mut port = MockPort::default();
         let mut status = ScreenStatus::probe(&mut port);
         status.start(&mut port);
         let writes_after_start = port.writes.len();
 
-        status.update(&mut port, 10);
-        assert_eq!(port.writes.len(), writes_after_start);
-
-        status.update(&mut port, 25);
+        status.update(&mut port, 1);
         assert!(port.writes.len() > writes_after_start);
-        let writes_after_25 = port.writes.len();
 
-        status.update(&mut port, 37);
-        assert_eq!(port.writes.len(), writes_after_25);
+        let writes_after_1 = port.writes.len();
+        status.update(&mut port, 1);
+        assert_eq!(port.writes.len(), writes_after_1);
 
-        status.update(&mut port, 50);
-        assert!(port.writes.len() > writes_after_25);
+        status.update(&mut port, 2);
+        assert!(port.writes.len() > writes_after_1);
+        let writes_after_2 = port.writes.len();
+
+        status.update(&mut port, 2);
+        assert_eq!(port.writes.len(), writes_after_2);
     }
 
     #[test]

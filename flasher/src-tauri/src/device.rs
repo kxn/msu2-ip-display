@@ -11,7 +11,7 @@ use crate::protocol::{contains_sequence, HANDSHAKE};
 
 const TARGET_VID: u16 = 0x1a86;
 const TARGET_PID: u16 = 0xfe0c;
-const BAUD_RATE: u32 = 19_200;
+const BAUD_RATE: u32 = 921_600;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct SerialPortSettings {
@@ -28,7 +28,7 @@ fn serial_port_settings() -> SerialPortSettings {
         data_bits: DataBits::Eight,
         parity: Parity::None,
         stop_bits: StopBits::One,
-        flow_control: FlowControl::None,
+        flow_control: FlowControl::Hardware,
     }
 }
 
@@ -270,14 +270,14 @@ mod tests {
     }
 
     #[test]
-    fn task4_serial_port_settings_enforce_19200_8n1() {
+    fn task4_serial_port_settings_use_official_high_speed_mode() {
         let settings = serial_port_settings();
 
-        assert_eq!(settings.baud_rate, 19_200);
+        assert_eq!(settings.baud_rate, 921_600);
         assert_eq!(settings.data_bits, DataBits::Eight);
         assert_eq!(settings.parity, Parity::None);
         assert_eq!(settings.stop_bits, StopBits::One);
-        assert_eq!(settings.flow_control, FlowControl::None);
+        assert_eq!(settings.flow_control, FlowControl::Hardware);
     }
 
     #[test]

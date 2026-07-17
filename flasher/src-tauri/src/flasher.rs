@@ -199,9 +199,7 @@ pub fn write_lcd_region<P: PortIo>(
     }
 
     port.write_all(&set_xy_packet(x, y))?;
-    let _ = port.read_idle(80, 20)?;
     port.write_all(&set_size_packet(width, height))?;
-    let _ = port.read_idle(80, 20)?;
 
     let address_packet = load_lcd_address_packet();
     for attempt in 1..=retry.attempts {
@@ -249,6 +247,7 @@ mod tests {
     struct MockPort {
         writes: Vec<Vec<u8>>,
         replies: VecDeque<Vec<u8>>,
+        read_calls: Vec<(u64, u64)>,
     }
 
     impl MockPort {
@@ -256,6 +255,7 @@ mod tests {
             Self {
                 writes: Vec::new(),
                 replies: VecDeque::new(),
+                read_calls: Vec::new(),
             }
         }
 
@@ -263,6 +263,7 @@ mod tests {
             Self {
                 writes: Vec::new(),
                 replies: replies.into(),
+                read_calls: Vec::new(),
             }
         }
     }
@@ -273,7 +274,8 @@ mod tests {
             Ok(())
         }
 
-        fn read_idle(&mut self, _total_ms: u64, _idle_ms: u64) -> AppResult<Vec<u8>> {
+        fn read_idle(&mut self, total_ms: u64, idle_ms: u64) -> AppResult<Vec<u8>> {
+            self.read_calls.push((total_ms, idle_ms));
             if let Some(reply) = self.replies.pop_front() {
                 return Ok(reply);
             }
@@ -363,6 +365,16 @@ mod tests {
             &port.writes[4][24..30],
             &[0x04, 0x04, 0xff, 0xff, 0xff, 0xff]
         );
+    }
+
+    #[test]
+    fn lcd_region_writer_waits_only_for_lcd_add_ack() {
+        let bytes = vec![0x12; 2];
+        let mut port = MockPort::new();
+
+        write_lcd_region(&mut port, 4, 5, 1, 1, &bytes, RetryPolicy::default()).unwrap();
+
+        assert_eq!(port.read_calls, vec![(300, 40)]);
     }
 
     #[test]
