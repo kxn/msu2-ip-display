@@ -44,6 +44,33 @@ pub fn write_flash_page_packet(page: u32, data: &[u8; 256]) -> [u8; 390] {
     packet
 }
 
+pub fn load_lcd_address_packet() -> [u8; 6] {
+    [0x02, 0x03, 0x07, 0x00, 0x00, 0x00]
+}
+
+pub fn write_lcd_data_packet(size: u16, data: &[u8; 256]) -> [u8; 390] {
+    let mut packet = [0u8; 390];
+
+    for index in 0..64usize {
+        let src = index * 4;
+        let dst = index * 6;
+        packet[dst] = 0x04;
+        packet[dst + 1] = index as u8;
+        packet[dst + 2] = data[src];
+        packet[dst + 3] = data[src + 1];
+        packet[dst + 4] = data[src + 2];
+        packet[dst + 5] = data[src + 3];
+    }
+
+    packet[384] = 0x02;
+    packet[385] = 0x03;
+    packet[386] = 0x08;
+    packet[387] = hi(size);
+    packet[388] = lo(size);
+    packet[389] = 0x00;
+    packet
+}
+
 pub fn expected_write_reply(page: u32) -> [u8; 6] {
     [
         0x03,
@@ -70,7 +97,9 @@ pub fn show_photo_packet(page: u16) -> [u8; 6] {
 pub fn contains_sequence(haystack: &[u8], needle: &[u8]) -> bool {
     !needle.is_empty()
         && haystack.len() >= needle.len()
-        && haystack.windows(needle.len()).any(|window| window == needle)
+        && haystack
+            .windows(needle.len())
+            .any(|window| window == needle)
 }
 
 #[cfg(test)]
@@ -108,6 +137,21 @@ mod tests {
             [0x02, 0x01, 0x00, 0xa0, 0x00, 0x50]
         );
         assert_eq!(show_photo_packet(0), [0x02, 0x03, 0x00, 0x00, 0x00, 0x00]);
+    }
+
+    #[test]
+    fn lcd_direct_write_packets_match_official_demo() {
+        assert_eq!(
+            load_lcd_address_packet(),
+            [0x02, 0x03, 0x07, 0x00, 0x00, 0x00]
+        );
+
+        let data = [0x5a; 256];
+        let packet = write_lcd_data_packet(16, &data);
+        assert_eq!(packet.len(), 390);
+        assert_eq!(&packet[0..6], &[0x04, 0x00, 0x5a, 0x5a, 0x5a, 0x5a]);
+        assert_eq!(&packet[378..384], &[0x04, 0x3f, 0x5a, 0x5a, 0x5a, 0x5a]);
+        assert_eq!(&packet[384..390], &[0x02, 0x03, 0x08, 0x00, 0x10, 0x00]);
     }
 
     #[test]

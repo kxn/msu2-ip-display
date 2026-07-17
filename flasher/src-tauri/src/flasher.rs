@@ -4,9 +4,11 @@ use crate::assets::{validate_image, FlashImage, PAGES_PER_IMAGE};
 use crate::device::PortIo;
 use crate::errors::{AppError, AppResult};
 use crate::protocol::{
-    contains_sequence, erase_flash_pages_packet, expected_write_reply, set_size_packet,
-    set_xy_packet, show_photo_packet, write_flash_page_packet,
+    contains_sequence, erase_flash_pages_packet, expected_write_reply, load_lcd_address_packet,
+    set_size_packet, set_xy_packet, show_photo_packet, write_flash_page_packet,
+    write_lcd_data_packet,
 };
+use crate::screen_status::ScreenStatus;
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
 pub enum FlashPhase {
@@ -41,16 +43,51 @@ where
     P: PortIo,
     F: FnMut(FlashProgress),
 {
+    flash_images_internal(port, images, None, &mut emit)
+}
+
+pub fn flash_images_with_screen_status<P, F>(
+    port: &mut P,
+    images: &[FlashImage<'_>],
+    mut emit: F,
+) -> AppResult<()>
+where
+    P: PortIo,
+    F: FnMut(FlashProgress),
+{
+    let mut screen = ScreenStatus::probe(port);
+    screen.start(port);
+    let result = flash_images_internal(port, images, Some(&mut screen), &mut emit);
+    if result.is_ok() {
+        screen.finish(port);
+    }
+    result
+}
+
+fn flash_images_internal<P, F>(
+    port: &mut P,
+    images: &[FlashImage<'_>],
+    mut screen: Option<&mut ScreenStatus>,
+    emit: &mut F,
+) -> AppResult<()>
+where
+    P: PortIo,
+    F: FnMut(FlashProgress),
+{
     for image in images {
-        validate_image(image.label, image.bytes)
-            .map_err(|err| AppError::Asset(err.to_string()))?;
+        validate_image(image.label, image.bytes).map_err(|err| AppError::Asset(err.to_string()))?;
     }
 
     let total_pages = (images.len() as u32) * (PAGES_PER_IMAGE as u32);
     let mut completed_pages = 0u32;
 
     for image in images {
-        erase_pages(port, image.start_page, PAGES_PER_IMAGE, RetryPolicy::default())?;
+        erase_pages(
+            port,
+            image.start_page,
+            PAGES_PER_IMAGE,
+            RetryPolicy::default(),
+        )?;
 
         for page_index in 0..PAGES_PER_IMAGE {
             let offset = (page_index as usize) * 256;
@@ -60,13 +97,17 @@ where
             write_page(port, page, &chunk, RetryPolicy::default())?;
             completed_pages += 1;
 
-            emit(FlashProgress {
+            let progress = FlashProgress {
                 phase: FlashPhase::Write,
                 current_page: completed_pages,
                 total_pages,
                 percent: ((completed_pages * 100) / total_pages) as u8,
                 display_message: format!("写入中 {}%", (completed_pages * 100) / total_pages),
-            });
+            };
+            if let Some(screen) = screen.as_mut() {
+                screen.update(port, progress.percent);
+            }
+            emit(progress);
         }
     }
 
@@ -133,6 +174,57 @@ fn write_page<P: PortIo>(
     Err(AppError::Protocol(
         "unreachable write retry state".to_string(),
     ))
+}
+
+pub fn write_lcd_region<P: PortIo>(
+    port: &mut P,
+    x: u16,
+    y: u16,
+    width: u16,
+    height: u16,
+    bytes: &[u8],
+    retry: RetryPolicy,
+) -> AppResult<()> {
+    let expected_len = (width as usize) * (height as usize) * 2;
+    if width == 0 || height == 0 || bytes.len() != expected_len {
+        return Err(AppError::Protocol(format!(
+            "lcd region {}x{} at {},{} has {} bytes, expected {}",
+            width,
+            height,
+            x,
+            y,
+            bytes.len(),
+            expected_len
+        )));
+    }
+
+    port.write_all(&set_xy_packet(x, y))?;
+    let _ = port.read_idle(80, 20)?;
+    port.write_all(&set_size_packet(width, height))?;
+    let _ = port.read_idle(80, 20)?;
+
+    let address_packet = load_lcd_address_packet();
+    for attempt in 1..=retry.attempts {
+        port.write_all(&address_packet)?;
+        let reply = port.read_idle(300, 40)?;
+        if contains_sequence(&reply, &address_packet) {
+            break;
+        }
+        if attempt == retry.attempts {
+            return Err(AppError::Protocol(format!(
+                "lcd address {},{} {}x{} expected {:02X?}, got {:02X?}",
+                x, y, width, height, address_packet, reply
+            )));
+        }
+    }
+
+    for chunk in bytes.chunks(256) {
+        let mut page = [0xff; 256];
+        page[..chunk.len()].copy_from_slice(chunk);
+        port.write_all(&write_lcd_data_packet(chunk.len() as u16, &page))?;
+    }
+
+    Ok(())
 }
 
 pub fn preview_pages<P: PortIo>(port: &mut P) -> AppResult<()> {
@@ -213,8 +305,14 @@ mod tests {
 
         assert_eq!(port.writes.len(), 101);
         assert_eq!(port.writes[0], vec![0x03, 0x02, 0x0e, 0xf2, 0x00, 0x64]);
-        assert_eq!(&port.writes[1][384..390], &[0x03, 0x03, 0x00, 0x0e, 0xf2, 0x01]);
-        assert_eq!(&port.writes[100][384..390], &[0x03, 0x03, 0x00, 0x0f, 0x55, 0x01]);
+        assert_eq!(
+            &port.writes[1][384..390],
+            &[0x03, 0x03, 0x00, 0x0e, 0xf2, 0x01]
+        );
+        assert_eq!(
+            &port.writes[100][384..390],
+            &[0x03, 0x03, 0x00, 0x0f, 0x55, 0x01]
+        );
         assert_eq!(progress.last().unwrap().percent, 100);
     }
 
@@ -233,6 +331,50 @@ mod tests {
         assert_eq!(photo_packets[1], vec![0x02, 0x03, 0x00, 0x0e, 0xf2, 0x00]);
         assert_eq!(photo_packets[2], vec![0x02, 0x03, 0x00, 0x0f, 0x56, 0x00]);
         assert_eq!(photo_packets[3], vec![0x02, 0x03, 0x00, 0x00, 0x00, 0x00]);
+    }
+
+    #[test]
+    fn lcd_region_writer_sends_address_and_data_packets() {
+        let bytes = vec![0x12; 272];
+        let mut port = MockPort::new();
+
+        write_lcd_region(&mut port, 4, 5, 8, 17, &bytes, RetryPolicy::default()).unwrap();
+
+        assert_eq!(port.writes.len(), 5);
+        assert_eq!(port.writes[0], vec![0x02, 0x00, 0x00, 0x04, 0x00, 0x05]);
+        assert_eq!(port.writes[1], vec![0x02, 0x01, 0x00, 0x08, 0x00, 0x11]);
+        assert_eq!(port.writes[2], vec![0x02, 0x03, 0x07, 0x00, 0x00, 0x00]);
+        assert_eq!(
+            &port.writes[3][384..390],
+            &[0x02, 0x03, 0x08, 0x01, 0x00, 0x00]
+        );
+        assert_eq!(
+            &port.writes[4][384..390],
+            &[0x02, 0x03, 0x08, 0x00, 0x10, 0x00]
+        );
+        assert_eq!(
+            &port.writes[4][0..24],
+            &[
+                0x04, 0x00, 0x12, 0x12, 0x12, 0x12, 0x04, 0x01, 0x12, 0x12, 0x12, 0x12, 0x04, 0x02,
+                0x12, 0x12, 0x12, 0x12, 0x04, 0x03, 0x12, 0x12, 0x12, 0x12
+            ]
+        );
+        assert_eq!(
+            &port.writes[4][24..30],
+            &[0x04, 0x04, 0xff, 0xff, 0xff, 0xff]
+        );
+    }
+
+    #[test]
+    fn lcd_region_writer_rejects_wrong_size_without_writes() {
+        let bytes = vec![0x00; 23];
+        let mut port = MockPort::new();
+
+        let err =
+            write_lcd_region(&mut port, 0, 0, 3, 4, &bytes, RetryPolicy::default()).unwrap_err();
+
+        assert!(matches!(err, AppError::Protocol(_)));
+        assert!(port.writes.is_empty());
     }
 
     #[test]
@@ -277,8 +419,14 @@ mod tests {
         flash_images(&mut port, &[flash_image], |_| {}).unwrap();
 
         assert_eq!(port.writes.len(), 102);
-        assert_eq!(&port.writes[1][384..390], &[0x03, 0x03, 0x00, 0x0e, 0xf2, 0x01]);
-        assert_eq!(&port.writes[2][384..390], &[0x03, 0x03, 0x00, 0x0e, 0xf2, 0x01]);
+        assert_eq!(
+            &port.writes[1][384..390],
+            &[0x03, 0x03, 0x00, 0x0e, 0xf2, 0x01]
+        );
+        assert_eq!(
+            &port.writes[2][384..390],
+            &[0x03, 0x03, 0x00, 0x0e, 0xf2, 0x01]
+        );
     }
 
     #[test]
@@ -300,5 +448,26 @@ mod tests {
 
         assert!(matches!(err, AppError::Protocol(_)));
         assert_eq!(port.writes.len(), 4);
+    }
+
+    #[test]
+    fn screen_status_probe_failure_does_not_fail_flash() {
+        let image = vec![0x5a; IMAGE_BYTES];
+        let flash_image = FlashImage {
+            label: "test",
+            start_page: 3826,
+            bytes: &image,
+        };
+        let mut port = MockPort::with_replies(vec![vec![], vec![], vec![0xde, 0xad]]);
+        let mut progress = Vec::new();
+
+        flash_images_with_screen_status(&mut port, &[flash_image], |event| progress.push(event))
+            .unwrap();
+
+        assert_eq!(progress.last().unwrap().percent, 100);
+        assert!(port
+            .writes
+            .iter()
+            .any(|packet| packet == &erase_flash_pages_packet(3826, PAGES_PER_IMAGE).to_vec()));
     }
 }

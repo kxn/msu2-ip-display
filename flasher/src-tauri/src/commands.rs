@@ -4,7 +4,7 @@ use crate::app_state::{AppState, UiDeviceStatus};
 use crate::assets::{embedded_assets, fixed_flash_plan, validate_plan};
 use crate::device::{handshake, open_serial_port, scan_candidates, DeviceInfo};
 use crate::errors::{AppError, AppResult, UiError};
-use crate::flasher::{flash_images, preview_pages, FlashProgress};
+use crate::flasher::{flash_images_with_screen_status, preview_pages, FlashProgress};
 
 fn emit_device_status(app: &AppHandle, status: &UiDeviceStatus) {
     let _ = app.emit("device-status-changed", status);
@@ -86,7 +86,10 @@ where
             candidate.vid_pid.clone(),
             candidate.serial.clone(),
         );
-        state.push_log("设备就绪", format!("Ready on {}", candidate_debug_line(&candidate)));
+        state.push_log(
+            "设备就绪",
+            format!("Ready on {}", candidate_debug_line(&candidate)),
+        );
 
         return UiDeviceStatus::ready(
             &candidate.port_name,
@@ -128,9 +131,11 @@ pub fn start_flash(app: AppHandle, state: State<'_, AppState>) -> Result<(), UiE
 
     state.push_log("写入中", format!("Starting flash on {port_name}"));
 
-    if let Err(err) = flash_images(&mut port, &plan, |progress: FlashProgress| {
-        let _ = app.emit("flash-progress", progress);
-    }) {
+    if let Err(err) =
+        flash_images_with_screen_status(&mut port, &plan, |progress: FlashProgress| {
+            let _ = app.emit("flash-progress", progress);
+        })
+    {
         return Err(flash_failure(&app, &state, &err));
     }
 
@@ -211,7 +216,10 @@ mod tests {
             },
         );
 
-        assert_eq!(opened.into_inner(), vec!["COM5".to_string(), "COM6".to_string()]);
+        assert_eq!(
+            opened.into_inner(),
+            vec!["COM5".to_string(), "COM6".to_string()]
+        );
         assert_eq!(status.port_name.as_deref(), Some("COM6"));
         assert_eq!(status.vid_pid.as_deref(), Some("1A86:FE0C"));
         assert_eq!(status.serial.as_deref(), Some("second"));

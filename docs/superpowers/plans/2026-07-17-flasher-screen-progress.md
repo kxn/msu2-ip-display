@@ -26,7 +26,7 @@
 **Interfaces:**
 - Produces: `load_lcd_address_packet() -> [u8; 6]`
 - Produces: `write_lcd_data_packet(size: u16, data: &[u8; 256]) -> [u8; 390]`
-- Produces: `expected_lcd_data_reply(size: u16) -> [u8; 6]`
+- Does not produce an `LCD_DATA` reply matcher because hardware probe showed `LCD_DATA` does not reply.
 
 - [ ] **Step 1: Write failing protocol tests**
 
@@ -34,10 +34,6 @@ Add tests showing:
 
 ```rust
 assert_eq!(load_lcd_address_packet(), [0x02, 0x03, 0x07, 0x00, 0x00, 0x00]);
-assert_eq!(
-    expected_lcd_data_reply(16),
-    [0x02, 0x03, 0x08, 0x00, 0x10, 0x00]
-);
 let data = [0x5a; 256];
 let packet = write_lcd_data_packet(16, &data);
 assert_eq!(packet.len(), 390);
@@ -96,7 +92,7 @@ Expected: compile failure because `write_lcd_region` does not exist.
 
 - [ ] **Step 3: Implement minimal region writer**
 
-Implement direct LCD write with 256-byte chunks padded with `0xFF` for the final partial chunk. Use `expected_lcd_data_reply(size)` for reply matching.
+Implement direct LCD write with 256-byte chunks padded with `0xFF` for the final partial chunk. Require an `LCD_ADD` echo before data writes, then send `LCD_DATA` without waiting for a reply.
 
 - [ ] **Step 4: Run tests and confirm GREEN**
 
@@ -144,7 +140,7 @@ Use fixed rectangles:
 - Percent panel under the title.
 - Progress bar `x=24, y=60, width=112, height=8`.
 
-Render RGB565 big-endian rectangles in Rust with the same green/black palette used in the mock. Use partial LCD writes only.
+Use pre-rendered RGB565 big-endian fragments for Chinese text and percentage labels, and render only the solid progress fill rectangle in Rust. Use partial LCD writes only.
 
 - [ ] **Step 4: Run tests and confirm GREEN**
 

@@ -5,6 +5,7 @@ pub mod device;
 pub mod errors;
 pub mod flasher;
 pub mod protocol;
+pub mod screen_status;
 
 use app_state::AppState;
 use commands::{copy_log, scan_devices, start_flash};

@@ -56,6 +56,16 @@ show_page0_rx=02 03 00 00 00 00
 - 不实现官方 Demo 的完整 host-side API。
 - 写入时不支持取消，避免中途打断导致 Flash 状态不完整。
 
+## 屏幕端写入状态
+
+新增的写入状态显示使用官方 Demo 里的直接 LCD 区域写入能力：
+
+- `LCD_ADD`：设置区域后发送 `02 03 07 00 00 00`，实测会回显同一个 6 字节包。
+- `LCD_DATA`：发送 `04 index data0 data1 data2 data3` 数据组后用 `02 03 08 size_hi size_lo 00` 提交，实测不回包。
+- 因此屏幕状态是 best-effort：探测或写入失败会自动禁用屏幕端进度，但不会中断 flash 写入。
+
+状态图中文字和百分比来自 `flasher/src-tauri/assets/flash_status_*.rgb565be` 小块素材，进度条填充由 Rust 生成纯色 RGB565 区域。进度只按 `25/50/75/100` 四个粗粒度阶段更新，避免慢速串口上频繁刷新。
+
 ## 后续方向
 
 - `host-usb/` 可独立做完整通信层，支持更多官方 API。

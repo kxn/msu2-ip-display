@@ -29,6 +29,12 @@ The official Python demos expose direct LCD-area writes:
 
 The current flasher already uses the same XY and size packet format for flash-page image display, so the only new protocol surface is `LCD_ADD` and `LCD_DATA`.
 
+Hardware probe on `COM4` confirmed:
+
+- `LCD_ADD` echoes `02 03 07 00 00 00`.
+- `LCD_DATA` accepts data but does not emit a reply.
+- The implementation must not wait for an `LCD_DATA` acknowledgement.
+
 ## Capability Rule
 
 Direct LCD writes are treated as optional.
@@ -62,6 +68,8 @@ The done layout is:
 
 - Title: `写入完成`
 - Subtitle: `可拔下或重新连接`
+
+The Rust backend should use pre-rendered RGB565 status fragments for Chinese text and percentage labels. Runtime font rendering is intentionally avoided.
 
 ## Partial Update Strategy
 
