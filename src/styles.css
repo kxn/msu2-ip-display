@@ -14,8 +14,8 @@
 
 html,
 body {
-  min-width: 860px;
-  min-height: 520px;
+  min-width: 0;
+  min-height: 0;
 }
 
 body {
@@ -28,14 +28,16 @@ button {
 }
 
 .shell {
-  width: min(944px, calc(100vw - 96px));
-  margin: 48px auto 36px;
+  width: min(944px, 100%);
+  margin: 0 auto;
+  padding: 32px 24px 24px;
 }
 
 .topbar {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 16px;
   border-bottom: 1px solid #dce2e5;
   padding-bottom: 22px;
 }
@@ -127,6 +129,7 @@ h1 {
 .device-copy,
 .write-copy {
   min-width: 0;
+  flex: 1 1 auto;
 }
 
 .usb-icon {
@@ -137,7 +140,7 @@ h1 {
 }
 
 .usb-icon::before {
-  content: "↟";
+  content: "↔";
   color: #1d9054;
   font-size: 34px;
   line-height: 44px;
@@ -156,23 +159,6 @@ h1 {
   color: #1d9054;
   font-size: 19px;
   font-weight: 700;
-}
-
-.meta {
-  min-width: 140px;
-}
-
-.meta span {
-  display: block;
-  margin-bottom: 8px;
-  color: #869197;
-  font-size: 14px;
-}
-
-.meta strong {
-  display: block;
-  font-size: 20px;
-  letter-spacing: 0;
 }
 
 .secondary,
@@ -232,9 +218,9 @@ h1 {
   display: flex;
   align-items: center;
   gap: 22px;
-  height: 52px;
+  min-height: 52px;
   margin-top: 26px;
-  padding: 0 24px;
+  padding: 10px 24px;
   border: 1px solid #dce2e5;
   border-radius: 8px;
   background: #fff;
@@ -242,6 +228,7 @@ h1 {
 
 #recordTime {
   color: #869197;
+  white-space: nowrap;
 }
 
 #recordText {
@@ -252,8 +239,49 @@ h1 {
   margin-left: auto;
   height: 38px;
   padding: 0 18px;
+  white-space: nowrap;
 }
 
 .hidden {
   display: none;
+}
+
+@media (max-width: 920px) {
+  .shell {
+    padding: 24px 20px 20px;
+  }
+
+  .device-row,
+  .write-row,
+  .record-line {
+    flex-wrap: wrap;
+    gap: 16px;
+  }
+
+  .secondary,
+  .primary,
+  .link-button {
+    margin-left: 0;
+  }
+
+  .primary {
+    width: 100%;
+    min-width: 0;
+  }
+}
+
+@media (max-width: 640px) {
+  .panel {
+    padding: 20px;
+  }
+
+  .device-name,
+  .write-title {
+    font-size: 27px;
+  }
+
+  .device-port,
+  .percent {
+    font-size: 17px;
+  }
 }

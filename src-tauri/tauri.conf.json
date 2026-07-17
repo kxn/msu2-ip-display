@@ -13,9 +13,11 @@
     "withGlobalTauri": true,
     "windows": [
       {
-        "title": "msu2-flasher",
-        "width": 800,
-        "height": 600
+        "title": "MSU2 Flasher",
+        "width": 920,
+        "height": 640,
+        "minWidth": 720,
+        "minHeight": 560
       }
     ],
     "security": {

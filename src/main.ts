@@ -24,8 +24,6 @@ type UiError = {
 const statusPill = document.querySelector<HTMLSpanElement>("#statusPill")!;
 const deviceName = document.querySelector<HTMLDivElement>("#deviceName")!;
 const devicePort = document.querySelector<HTMLDivElement>("#devicePort")!;
-const vidPid = document.querySelector<HTMLElement>("#vidPid")!;
-const serialId = document.querySelector<HTMLElement>("#serialId")!;
 const rescanButton = document.querySelector<HTMLButtonElement>("#rescanButton")!;
 const flashButton = document.querySelector<HTMLButtonElement>("#flashButton")!;
 const writeTitle = document.querySelector<HTMLDivElement>("#writeTitle")!;
@@ -76,8 +74,6 @@ function renderReady(status: UiDeviceStatus): void {
   setPill("设备已连接", "ok");
   deviceName.textContent = status.device_name || "CH32x035";
   devicePort.textContent = status.port_name ?? "";
-  vidPid.textContent = status.vid_pid || "-";
-  serialId.textContent = status.serial || "-";
   writeTitle.textContent = "准备就绪";
   writePercent.textContent = "";
   setWriteIdle(status.button_enabled && !flashing);
@@ -94,8 +90,6 @@ function renderNoDevice(status?: UiDeviceStatus): void {
   setPill("未检测到", "warn");
   deviceName.textContent = title;
   devicePort.textContent = "";
-  vidPid.textContent = "-";
-  serialId.textContent = "-";
   writeTitle.textContent = title;
   writePercent.textContent = "";
   setWriteIdle(false);
@@ -109,8 +103,6 @@ function renderOtherStatus(status: UiDeviceStatus): void {
   setPill(title, status.button_enabled ? "info" : "warn");
   deviceName.textContent = title;
   devicePort.textContent = status.port_name ?? "";
-  vidPid.textContent = status.vid_pid || "-";
-  serialId.textContent = status.serial || "-";
   writeTitle.textContent = title;
   writePercent.textContent = "";
   setWriteIdle(status.button_enabled && !flashing);
