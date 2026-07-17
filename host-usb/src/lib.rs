@@ -1,4 +1,5 @@
 pub mod cli;
+pub mod daemon;
 pub mod display;
 pub mod ip_detect;
 pub mod logging;
