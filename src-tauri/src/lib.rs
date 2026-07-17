@@ -1,6 +1,7 @@
 pub mod assets;
 pub mod device;
 pub mod errors;
+pub mod flasher;
 pub mod protocol;
 
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
