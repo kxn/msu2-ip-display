@@ -17,34 +17,46 @@ fn flash_failure(app: &AppHandle, state: &AppState, err: &AppError) -> UiError {
     ui
 }
 
+fn scan_no_device(
+    state: &AppState,
+    user_message: impl Into<String>,
+    detail: impl Into<String>,
+) -> UiDeviceStatus {
+    state.clear_device();
+    state.push_log(user_message, detail);
+    UiDeviceStatus::no_device()
+}
+
 #[tauri::command]
-pub fn scan_devices(app: AppHandle, state: State<'_, AppState>) -> Result<UiDeviceStatus, UiError> {
-    let candidates = scan_candidates().map_err(|err| err.to_ui_error())?;
+pub fn scan_devices(app: AppHandle, state: State<'_, AppState>) -> UiDeviceStatus {
+    let candidates = match scan_candidates() {
+        Ok(candidates) => candidates,
+        Err(err) => {
+            let status = scan_no_device(&state, err.user_message(), err.detail());
+            emit_device_status(&app, &status);
+            return status;
+        }
+    };
+
     let Some(candidate) = candidates.first() else {
-        state.clear_device();
-        state.push_log("未连接", "No candidate ports");
-        let status = UiDeviceStatus::no_device();
+        let status = scan_no_device(&state, "未连接", "No candidate ports");
         emit_device_status(&app, &status);
-        return Ok(status);
+        return status;
     };
 
     let mut port = match open_serial_port(&candidate.port_name) {
         Ok(port) => port,
         Err(err) => {
-            state.clear_device();
-            state.push_log(err.user_message(), err.detail());
-            let status = UiDeviceStatus::no_device();
+            let status = scan_no_device(&state, err.user_message(), err.detail());
             emit_device_status(&app, &status);
-            return Err(err.to_ui_error());
+            return status;
         }
     };
 
     if let Err(err) = handshake(&mut port) {
-        state.clear_device();
-        state.push_log(err.user_message(), err.detail());
-        let status = UiDeviceStatus::no_device();
+        let status = scan_no_device(&state, err.user_message(), err.detail());
         emit_device_status(&app, &status);
-        return Err(err.to_ui_error());
+        return status;
     }
 
     state.set_ready_device(
@@ -60,7 +72,7 @@ pub fn scan_devices(app: AppHandle, state: State<'_, AppState>) -> Result<UiDevi
         candidate.serial.as_deref().unwrap_or(""),
     );
     emit_device_status(&app, &status);
-    Ok(status)
+    status
 }
 
 #[tauri::command]
@@ -104,4 +116,26 @@ pub fn start_flash(app: AppHandle, state: State<'_, AppState>) -> Result<(), UiE
 #[tauri::command]
 pub fn copy_log(state: State<'_, AppState>) -> String {
     state.copy_log()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn scan_failure_status_clears_stale_device_and_returns_no_device() {
+        let state = AppState::default();
+        state.set_ready_device(
+            "COM9".to_string(),
+            Some("1A86:FE0C".to_string()),
+            Some("serial-123".to_string()),
+        );
+
+        let status = scan_no_device(&state, "未连接", "Detailed scan failure");
+
+        assert_eq!(status, UiDeviceStatus::no_device());
+        assert_eq!(state.selected_port(), None);
+        assert_eq!(state.last_user_log().as_deref(), Some("未连接"));
+        assert!(state.copy_log().contains("Detailed scan failure"));
+    }
 }
