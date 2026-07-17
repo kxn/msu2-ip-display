@@ -87,7 +87,7 @@ where
                     .ok_or_else(|| CliError("--interface requires a value".to_string()))?;
                 if !is_valid_linux_interface_name(&value) {
                     return Err(CliError(format!(
-                        "invalid interface name {value:?}; must be a non-empty Linux device name under 16 bytes without whitespace, '/' or ':'"
+                        "invalid interface name {value:?}; must be a non-empty Linux device name under 16 bytes using only A-Z, a-z, 0-9, '_', '-', '.', or '@'"
                     )));
                 }
                 options.interface = Some(value);
@@ -118,9 +118,19 @@ fn is_valid_linux_interface_name(value: &str) -> bool {
         && value != "."
         && value != ".."
         && value.len() < 16
-        && !value
-            .chars()
-            .any(|ch| ch.is_whitespace() || ch == '/' || ch == ':')
+        && value.is_ascii()
+        && value.bytes().all(|byte| {
+            matches!(
+                byte,
+                b'A'..=b'Z'
+                    | b'a'..=b'z'
+                    | b'0'..=b'9'
+                    | b'_'
+                    | b'-'
+                    | b'.'
+                    | b'@'
+            )
+        })
 }
 
 #[cfg(test)]
@@ -183,6 +193,13 @@ mod tests {
             ".",
             "..",
             "1234567890123456",
+            "foo;bar",
+            "foo\"bar",
+            "foo`bar",
+            "$(id)",
+            "foo&bar",
+            "foo|bar",
+            "foo'bar",
         ] {
             let err = parse_args(["install", "--interface", value]).unwrap_err();
             assert!(
