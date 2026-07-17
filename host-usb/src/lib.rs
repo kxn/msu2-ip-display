@@ -1,5 +1,6 @@
 pub mod cli;
 pub mod display;
+pub mod ip_detect;
 pub mod logging;
 pub mod protocol;
 pub mod platform;
