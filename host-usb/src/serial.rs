@@ -163,8 +163,17 @@ mod tests {
 
     #[test]
     fn poll_hangup_and_error_are_disconnected() {
-        assert_eq!(classify_poll_revents(POLLHUP_BITS), Some(SerialErrorKind::Disconnected));
-        assert_eq!(classify_poll_revents(POLLERR_BITS), Some(SerialErrorKind::Disconnected));
-        assert_eq!(classify_poll_revents(POLLNVAL_BITS), Some(SerialErrorKind::Disconnected));
+        assert_eq!(
+            classify_poll_revents(POLLHUP_BITS),
+            Some(SerialErrorKind::Disconnected)
+        );
+        assert_eq!(
+            classify_poll_revents(POLLERR_BITS),
+            Some(SerialErrorKind::Disconnected)
+        );
+        assert_eq!(
+            classify_poll_revents(POLLNVAL_BITS),
+            Some(SerialErrorKind::Disconnected)
+        );
     }
 }

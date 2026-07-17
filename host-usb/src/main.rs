@@ -86,6 +86,9 @@ fn command_exists(name: &str) -> bool {
 
 #[cfg(not(target_os = "linux"))]
 fn main() {
-    eprintln!("{}", miniboard_ipd::platform::unsupported_platform_message());
+    eprintln!(
+        "{}",
+        miniboard_ipd::platform::unsupported_platform_message()
+    );
     std::process::exit(1);
 }

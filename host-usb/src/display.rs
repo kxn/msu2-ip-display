@@ -1,9 +1,9 @@
 use std::net::Ipv4Addr;
 
 use crate::protocol::{
-    DHCP_FAILED_PAGE, DIGIT_RESOURCE_PAGE, IP_BACKGROUND_PAGE, PENDING_PAGE,
     add_ram_masked_packet, load_lcd_address_packet, load_ram_mix_show_packet, ram_init_packet,
     set_color_packet, set_size_packet, set_xy_packet, show_photo_packet, write_lcd_data_packet,
+    DHCP_FAILED_PAGE, DIGIT_RESOURCE_PAGE, IP_BACKGROUND_PAGE, PENDING_PAGE,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -105,7 +105,9 @@ impl DisplayRenderer {
                     });
                     x += DOT_SLOT_WIDTH;
                 } else {
-                    let digit = ch.to_digit(10).expect("IPv4 rows contain only digits and dot");
+                    let digit = ch
+                        .to_digit(10)
+                        .expect("IPv4 rows contain only digits and dot");
                     digits.push(DigitGlyph {
                         x,
                         y,
@@ -129,7 +131,13 @@ fn packet(bytes: [u8; 6], wait_for_echo: bool) -> WireWrite {
 
 fn row_width(row: &str) -> u16 {
     row.chars()
-        .map(|ch| if ch == '.' { DOT_SLOT_WIDTH } else { DIGIT_WIDTH })
+        .map(|ch| {
+            if ch == '.' {
+                DOT_SLOT_WIDTH
+            } else {
+                DIGIT_WIDTH
+            }
+        })
         .sum()
 }
 
@@ -216,7 +224,10 @@ mod tests {
     #[test]
     fn ip_render_starts_with_background_and_loads_ram_mix() {
         let writes = DisplayRenderer::ip(Ipv4Addr::new(192, 168, 1, 204));
-        assert_eq!(writes[0].bytes, show_photo_packet(IP_BACKGROUND_PAGE).to_vec());
+        assert_eq!(
+            writes[0].bytes,
+            show_photo_packet(IP_BACKGROUND_PAGE).to_vec()
+        );
         assert!(writes
             .iter()
             .any(|write| write.bytes == [0x02, 0x03, 0x0d, 0x00, 0x00, 0x00]));

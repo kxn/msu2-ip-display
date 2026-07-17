@@ -44,13 +44,14 @@ pub fn select_ipv4(snapshot: &NetworkSnapshot, config: &SelectionConfig) -> Sele
         return candidates
             .iter()
             .copied()
-            .find(|candidate| candidate.interface == *interface && is_normal_ipv4(candidate.address))
+            .find(|candidate| {
+                candidate.interface == *interface && is_normal_ipv4(candidate.address)
+            })
             .map(|candidate| Selection::Show(candidate.address))
             .unwrap_or_else(|| {
-                if candidates
-                    .iter()
-                    .any(|candidate| candidate.interface == *interface && is_link_local(candidate.address))
-                {
+                if candidates.iter().any(|candidate| {
+                    candidate.interface == *interface && is_link_local(candidate.address)
+                }) {
                     Selection::FailureCandidate
                 } else {
                     Selection::Pending
@@ -59,11 +60,9 @@ pub fn select_ipv4(snapshot: &NetworkSnapshot, config: &SelectionConfig) -> Sele
     }
 
     if let Some(default_route) = snapshot.routes.iter().find(|route| route.is_default) {
-        if let Some(candidate) = candidates
-            .iter()
-            .copied()
-            .find(|candidate| candidate.interface == default_route.interface && is_normal_ipv4(candidate.address))
-        {
+        if let Some(candidate) = candidates.iter().copied().find(|candidate| {
+            candidate.interface == default_route.interface && is_normal_ipv4(candidate.address)
+        }) {
             return Selection::Show(candidate.address);
         }
     }
@@ -77,10 +76,9 @@ pub fn select_ipv4(snapshot: &NetworkSnapshot, config: &SelectionConfig) -> Sele
 
     match normal.len() {
         0 => {
-            if candidates
-                .iter()
-                .any(|candidate| !is_virtual_interface(&candidate.interface) && is_link_local(candidate.address))
-            {
+            if candidates.iter().any(|candidate| {
+                !is_virtual_interface(&candidate.interface) && is_link_local(candidate.address)
+            }) {
                 Selection::FailureCandidate
             } else {
                 Selection::Pending
@@ -88,8 +86,11 @@ pub fn select_ipv4(snapshot: &NetworkSnapshot, config: &SelectionConfig) -> Sele
         }
         1 => Selection::Show(normal[0].address),
         _ => {
-            let dynamic: Vec<&AddressCandidate> =
-                normal.iter().copied().filter(|candidate| candidate.is_dynamic).collect();
+            let dynamic: Vec<&AddressCandidate> = normal
+                .iter()
+                .copied()
+                .filter(|candidate| candidate.is_dynamic)
+                .collect();
             if dynamic.len() == 1 {
                 Selection::Show(dynamic[0].address)
             } else {
@@ -139,22 +140,42 @@ mod tests {
     #[test]
     fn fixed_interface_wins_over_default_route() {
         let snapshot = NetworkSnapshot {
-            addresses: vec![addr("eth0", [192, 168, 1, 10], true), addr("eth1", [10, 0, 0, 5], true)],
-            routes: vec![Route { interface: "eth1".to_string(), is_default: true }],
+            addresses: vec![
+                addr("eth0", [192, 168, 1, 10], true),
+                addr("eth1", [10, 0, 0, 5], true),
+            ],
+            routes: vec![Route {
+                interface: "eth1".to_string(),
+                is_default: true,
+            }],
         };
-        let config = SelectionConfig { interface: Some("eth0".to_string()) };
+        let config = SelectionConfig {
+            interface: Some("eth0".to_string()),
+        };
 
-        assert_eq!(select_ipv4(&snapshot, &config), Selection::Show(Ipv4Addr::new(192, 168, 1, 10)));
+        assert_eq!(
+            select_ipv4(&snapshot, &config),
+            Selection::Show(Ipv4Addr::new(192, 168, 1, 10))
+        );
     }
 
     #[test]
     fn default_route_interface_is_preferred() {
         let snapshot = NetworkSnapshot {
-            addresses: vec![addr("eth0", [192, 168, 1, 10], true), addr("eth1", [10, 0, 0, 5], true)],
-            routes: vec![Route { interface: "eth1".to_string(), is_default: true }],
+            addresses: vec![
+                addr("eth0", [192, 168, 1, 10], true),
+                addr("eth1", [10, 0, 0, 5], true),
+            ],
+            routes: vec![Route {
+                interface: "eth1".to_string(),
+                is_default: true,
+            }],
         };
 
-        assert_eq!(select_ipv4(&snapshot, &SelectionConfig::default()), Selection::Show(Ipv4Addr::new(10, 0, 0, 5)));
+        assert_eq!(
+            select_ipv4(&snapshot, &SelectionConfig::default()),
+            Selection::Show(Ipv4Addr::new(10, 0, 0, 5))
+        );
     }
 
     #[test]
@@ -164,17 +185,26 @@ mod tests {
             routes: vec![],
         };
 
-        assert_eq!(select_ipv4(&snapshot, &SelectionConfig::default()), Selection::Show(Ipv4Addr::new(192, 168, 55, 20)));
+        assert_eq!(
+            select_ipv4(&snapshot, &SelectionConfig::default()),
+            Selection::Show(Ipv4Addr::new(192, 168, 55, 20))
+        );
     }
 
     #[test]
     fn multiple_without_default_prefers_dynamic() {
         let snapshot = NetworkSnapshot {
-            addresses: vec![addr("eth0", [192, 168, 1, 10], false), addr("eth1", [10, 0, 0, 5], true)],
+            addresses: vec![
+                addr("eth0", [192, 168, 1, 10], false),
+                addr("eth1", [10, 0, 0, 5], true),
+            ],
             routes: vec![],
         };
 
-        assert_eq!(select_ipv4(&snapshot, &SelectionConfig::default()), Selection::Show(Ipv4Addr::new(10, 0, 0, 5)));
+        assert_eq!(
+            select_ipv4(&snapshot, &SelectionConfig::default()),
+            Selection::Show(Ipv4Addr::new(10, 0, 0, 5))
+        );
     }
 
     #[test]
@@ -184,7 +214,10 @@ mod tests {
             routes: vec![],
         };
 
-        assert_eq!(select_ipv4(&snapshot, &SelectionConfig::default()), Selection::FailureCandidate);
+        assert_eq!(
+            select_ipv4(&snapshot, &SelectionConfig::default()),
+            Selection::FailureCandidate
+        );
     }
 
     #[test]
@@ -194,7 +227,10 @@ mod tests {
             routes: vec![],
         };
 
-        assert_eq!(select_ipv4(&snapshot, &SelectionConfig::default()), Selection::Pending);
+        assert_eq!(
+            select_ipv4(&snapshot, &SelectionConfig::default()),
+            Selection::Pending
+        );
     }
 
     #[test]
@@ -204,6 +240,9 @@ mod tests {
             routes: vec![],
         };
 
-        assert_eq!(select_ipv4(&snapshot, &SelectionConfig::default()), Selection::Pending);
+        assert_eq!(
+            select_ipv4(&snapshot, &SelectionConfig::default()),
+            Selection::Pending
+        );
     }
 }

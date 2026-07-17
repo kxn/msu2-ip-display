@@ -18,7 +18,10 @@ pub enum DaemonEvent {
     DeviceCandidateFound,
     HandshakeOk,
     DeviceDisconnected,
-    NetworkSnapshot { snapshot: NetworkSnapshot, now: Instant },
+    NetworkSnapshot {
+        snapshot: NetworkSnapshot,
+        now: Instant,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

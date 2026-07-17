@@ -36,7 +36,14 @@ pub fn set_xy_packet(x: u16, y: u16) -> [u8; 6] {
 }
 
 pub fn set_size_packet(width: u16, height: u16) -> [u8; 6] {
-    [0x02, 0x01, hi16(width), lo16(width), hi16(height), lo16(height)]
+    [
+        0x02,
+        0x01,
+        hi16(width),
+        lo16(width),
+        hi16(height),
+        lo16(height),
+    ]
 }
 
 pub fn set_color_packet(foreground: u16, background: u16) -> [u8; 6] {
@@ -116,8 +123,14 @@ mod tests {
     fn base_packets_match_verified_protocol() {
         assert_eq!(HANDSHAKE, [0x00, 0x4d, 0x53, 0x4e, 0x43, 0x4e]);
         assert_eq!(set_xy_packet(0, 0), [0x02, 0x00, 0x00, 0x00, 0x00, 0x00]);
-        assert_eq!(set_size_packet(160, 80), [0x02, 0x01, 0x00, 0xa0, 0x00, 0x50]);
-        assert_eq!(show_photo_packet(3926), [0x02, 0x03, 0x00, 0x0f, 0x56, 0x00]);
+        assert_eq!(
+            set_size_packet(160, 80),
+            [0x02, 0x01, 0x00, 0xa0, 0x00, 0x50]
+        );
+        assert_eq!(
+            show_photo_packet(3926),
+            [0x02, 0x03, 0x00, 0x0f, 0x56, 0x00]
+        );
     }
 
     #[test]
@@ -135,7 +148,10 @@ mod tests {
 
     #[test]
     fn lcd_direct_write_packet_matches_flasher() {
-        assert_eq!(load_lcd_address_packet(), [0x02, 0x03, 0x07, 0x00, 0x00, 0x00]);
+        assert_eq!(
+            load_lcd_address_packet(),
+            [0x02, 0x03, 0x07, 0x00, 0x00, 0x00]
+        );
         let data = [0x5a; 256];
         let packet = write_lcd_data_packet(16, &data);
         assert_eq!(packet.len(), 390);

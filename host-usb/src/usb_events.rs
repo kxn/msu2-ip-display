@@ -24,10 +24,8 @@ fn netlink_socket_available() -> bool {
             )
         },
         bind_uevent_netlink,
-        |fd| {
-            unsafe {
-                libc::close(fd);
-            }
+        |fd| unsafe {
+            libc::close(fd);
         },
     )
 }
