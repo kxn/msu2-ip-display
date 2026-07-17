@@ -1,5 +1,6 @@
 pub mod cli;
 pub mod logging;
+pub mod protocol;
 pub mod platform;
 
 #[cfg(test)]
