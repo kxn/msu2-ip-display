@@ -1,6 +1,6 @@
 use serde::Serialize;
 
-use crate::assets::{FlashImage, IMAGE_BYTES, PAGES_PER_IMAGE};
+use crate::assets::{validate_image, FlashImage, PAGES_PER_IMAGE};
 use crate::device::PortIo;
 use crate::errors::{AppError, AppResult};
 use crate::protocol::{
@@ -41,19 +41,15 @@ where
     P: PortIo,
     F: FnMut(FlashProgress),
 {
+    for image in images {
+        validate_image(image.label, image.bytes)
+            .map_err(|err| AppError::Asset(err.to_string()))?;
+    }
+
     let total_pages = (images.len() as u32) * (PAGES_PER_IMAGE as u32);
     let mut completed_pages = 0u32;
 
     for image in images {
-        if image.bytes.len() != IMAGE_BYTES {
-            return Err(AppError::Asset(format!(
-                "{} has {} bytes, expected {}",
-                image.label,
-                image.bytes.len(),
-                IMAGE_BYTES
-            )));
-        }
-
         erase_pages(port, image.start_page, PAGES_PER_IMAGE, RetryPolicy::default())?;
 
         for page_index in 0..PAGES_PER_IMAGE {
@@ -155,24 +151,40 @@ pub fn preview_pages<P: PortIo>(port: &mut P) -> AppResult<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::assets::IMAGE_BYTES;
+    use std::collections::VecDeque;
 
-    struct ReplyingPort {
+    struct MockPort {
         writes: Vec<Vec<u8>>,
+        replies: VecDeque<Vec<u8>>,
     }
 
-    impl ReplyingPort {
+    impl MockPort {
         fn new() -> Self {
-            Self { writes: Vec::new() }
+            Self {
+                writes: Vec::new(),
+                replies: VecDeque::new(),
+            }
+        }
+
+        fn with_replies(replies: Vec<Vec<u8>>) -> Self {
+            Self {
+                writes: Vec::new(),
+                replies: replies.into(),
+            }
         }
     }
 
-    impl PortIo for ReplyingPort {
+    impl PortIo for MockPort {
         fn write_all(&mut self, bytes: &[u8]) -> AppResult<()> {
             self.writes.push(bytes.to_vec());
             Ok(())
         }
 
         fn read_idle(&mut self, _total_ms: u64, _idle_ms: u64) -> AppResult<Vec<u8>> {
+            if let Some(reply) = self.replies.pop_front() {
+                return Ok(reply);
+            }
             let Some(last) = self.writes.last() else {
                 return Ok(vec![]);
             };
@@ -194,7 +206,7 @@ mod tests {
             start_page: 3826,
             bytes: &image,
         };
-        let mut port = ReplyingPort::new();
+        let mut port = MockPort::new();
         let mut progress = Vec::new();
 
         flash_images(&mut port, &[flash_image], |event| progress.push(event)).unwrap();
@@ -208,7 +220,7 @@ mod tests {
 
     #[test]
     fn preview_pages_sends_page_zero_last() {
-        let mut port = ReplyingPort::new();
+        let mut port = MockPort::new();
         preview_pages(&mut port).unwrap();
         let photo_packets: Vec<Vec<u8>> = port
             .writes
@@ -221,5 +233,72 @@ mod tests {
         assert_eq!(photo_packets[1], vec![0x02, 0x03, 0x00, 0x0e, 0xf2, 0x00]);
         assert_eq!(photo_packets[2], vec![0x02, 0x03, 0x00, 0x0f, 0x56, 0x00]);
         assert_eq!(photo_packets[3], vec![0x02, 0x03, 0x00, 0x00, 0x00, 0x00]);
+    }
+
+    #[test]
+    fn wrong_size_later_image_causes_zero_writes() {
+        let good = vec![0x5a; IMAGE_BYTES];
+        let bad = vec![0x5a; IMAGE_BYTES - 1];
+        let images = [
+            FlashImage {
+                label: "good",
+                start_page: 3826,
+                bytes: &good,
+            },
+            FlashImage {
+                label: "bad",
+                start_page: 3926,
+                bytes: &bad,
+            },
+        ];
+        let mut port = MockPort::new();
+
+        let err = flash_images(&mut port, &images, |_| {}).unwrap_err();
+
+        assert!(matches!(err, AppError::Asset(_)));
+        assert!(port.writes.is_empty());
+    }
+
+    #[test]
+    fn retries_a_failed_write_once_then_succeeds() {
+        let image = vec![0x5a; IMAGE_BYTES];
+        let flash_image = FlashImage {
+            label: "test",
+            start_page: 3826,
+            bytes: &image,
+        };
+        let first_page = flash_image.start_page as u32;
+        let mut port = MockPort::with_replies(vec![
+            erase_flash_pages_packet(flash_image.start_page, PAGES_PER_IMAGE).to_vec(),
+            vec![0xde, 0xad],
+            expected_write_reply(first_page).to_vec(),
+        ]);
+
+        flash_images(&mut port, &[flash_image], |_| {}).unwrap();
+
+        assert_eq!(port.writes.len(), 102);
+        assert_eq!(&port.writes[1][384..390], &[0x03, 0x03, 0x00, 0x0e, 0xf2, 0x01]);
+        assert_eq!(&port.writes[2][384..390], &[0x03, 0x03, 0x00, 0x0e, 0xf2, 0x01]);
+    }
+
+    #[test]
+    fn fails_after_exhausting_write_retries() {
+        let image = vec![0x5a; IMAGE_BYTES];
+        let flash_image = FlashImage {
+            label: "test",
+            start_page: 3826,
+            bytes: &image,
+        };
+        let mut port = MockPort::with_replies(vec![
+            erase_flash_pages_packet(flash_image.start_page, PAGES_PER_IMAGE).to_vec(),
+            vec![0xde, 0xad],
+            vec![0xbe, 0xef],
+            vec![0xfa, 0xce],
+        ]);
+
+        let err = flash_images(&mut port, &[flash_image], |_| {}).unwrap_err();
+
+        assert!(matches!(err, AppError::Protocol(_)));
+        assert_eq!(port.writes.len(), 4);
     }
 }
