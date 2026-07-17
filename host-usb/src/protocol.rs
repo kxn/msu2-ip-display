@@ -59,7 +59,6 @@ pub fn ram_init_packet(fill: u8) -> [u8; 6] {
 }
 
 pub fn add_ram_masked_packet(address: u32) -> [u8; 6] {
-    let address = address.saturating_sub(4 * 256);
     [
         0x02,
         0x03,
@@ -126,7 +125,7 @@ mod tests {
         assert_eq!(ram_init_packet(0), [0x02, 0x03, 0x0d, 0x00, 0x00, 0x00]);
         assert_eq!(
             add_ram_masked_packet((4026 + 5) * 256),
-            [0x02, 0x03, 0x0f, 0x0f, 0xbb, 0x00]
+            [0x02, 0x03, 0x0f, 0x0f, 0xbf, 0x00]
         );
         assert_eq!(
             load_ram_mix_show_packet(3926),
