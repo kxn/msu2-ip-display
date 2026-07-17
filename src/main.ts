@@ -136,6 +136,17 @@ function renderFlashFailure(error: UiError | string): void {
   setRecord(message, true);
 }
 
+async function watchEvent<T>(
+  eventName: string,
+  handler: Parameters<typeof listen<T>>[1],
+): Promise<void> {
+  try {
+    await listen<T>(eventName, handler);
+  } catch {
+    // Allows browser-only visual checks without Tauri IPC.
+  }
+}
+
 async function startFlash(): Promise<void> {
   flashing = true;
   flashButton.disabled = true;
@@ -163,13 +174,15 @@ copyLogButton.addEventListener("click", async () => {
 });
 
 async function init(): Promise<void> {
-  await listen<UiDeviceStatus>("device-status-changed", (event) => {
+  setRecord("未连接", true);
+
+  await watchEvent<UiDeviceStatus>("device-status-changed", (event) => {
     if (!flashing) {
       renderStatus(event.payload);
     }
   });
 
-  await listen<FlashProgress>("flash-progress", (event) => {
+  await watchEvent<FlashProgress>("flash-progress", (event) => {
     const percent = event.payload.percent;
     writeTitle.textContent = "写入中";
     writePercent.textContent = `${percent}%`;
@@ -177,7 +190,7 @@ async function init(): Promise<void> {
     setRecord(`写入中 ${percent}%`, true);
   });
 
-  await listen<string>("flash-finished", () => {
+  await watchEvent<string>("flash-finished", () => {
     flashing = false;
     setPill("已完成", "ok");
     writeTitle.textContent = "完成";
@@ -189,7 +202,7 @@ async function init(): Promise<void> {
     setRecord("写入完成", true);
   });
 
-  await listen<UiError>("flash-failed", (event) => {
+  await watchEvent<UiError>("flash-failed", (event) => {
     renderFlashFailure(event.payload);
   });
 
