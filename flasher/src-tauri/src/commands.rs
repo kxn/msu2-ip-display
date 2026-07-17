@@ -1,4 +1,4 @@
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::app_state::{AppState, UiDeviceStatus};
 use crate::assets::{embedded_assets, fixed_flash_plan, validate_plan};
@@ -101,6 +101,15 @@ where
     scan_no_device(state, "未连接", failures.join("; "))
 }
 
+fn queue_flash_start<F>(state: &AppState, dispatch: F) -> AppResult<()>
+where
+    F: FnOnce(String),
+{
+    let port_name = state.selected_port().ok_or(AppError::NoDevice)?;
+    dispatch(port_name);
+    Ok(())
+}
+
 #[tauri::command]
 pub fn scan_devices(app: AppHandle, state: State<'_, AppState>) -> UiDeviceStatus {
     let status = scan_devices_with(&state, scan_candidates(), open_serial_port, handshake);
@@ -110,23 +119,33 @@ pub fn scan_devices(app: AppHandle, state: State<'_, AppState>) -> UiDeviceStatu
 
 #[tauri::command]
 pub fn start_flash(app: AppHandle, state: State<'_, AppState>) -> Result<(), UiError> {
-    let port_name = match state.selected_port() {
-        Some(port_name) => port_name,
-        None => return Err(flash_failure(&app, &state, &AppError::NoDevice)),
-    };
+    queue_flash_start(&state, |port_name| {
+        let app = app.clone();
+        tauri::async_runtime::spawn_blocking(move || run_flash_job(app, port_name));
+    })
+    .map_err(|err| flash_failure(&app, &state, &err))
+}
+
+fn run_flash_job(app: AppHandle, port_name: String) {
+    let state = app.state::<AppState>();
+    if let Err(err) = run_flash_sequence(&app, &state, &port_name) {
+        flash_failure(&app, &state, &err);
+    }
+}
+
+fn run_flash_sequence(app: &AppHandle, state: &AppState, port_name: &str) -> AppResult<()> {
     let assets = embedded_assets();
     let plan = fixed_flash_plan(&assets);
     if let Err(err) = validate_plan(&plan) {
-        let app_error = AppError::Asset(err.to_string());
-        return Err(flash_failure(&app, &state, &app_error));
+        return Err(AppError::Asset(err.to_string()));
     }
 
     let mut port = match open_serial_port(&port_name) {
         Ok(port) => port,
-        Err(err) => return Err(flash_failure(&app, &state, &err)),
+        Err(err) => return Err(err),
     };
     if let Err(err) = handshake(&mut port) {
-        return Err(flash_failure(&app, &state, &err));
+        return Err(err);
     }
 
     state.push_log("写入中", format!("Starting flash on {port_name}"));
@@ -136,11 +155,11 @@ pub fn start_flash(app: AppHandle, state: State<'_, AppState>) -> Result<(), UiE
             let _ = app.emit("flash-progress", progress);
         })
     {
-        return Err(flash_failure(&app, &state, &err));
+        return Err(err);
     }
 
     if let Err(err) = preview_pages(&mut port) {
-        return Err(flash_failure(&app, &state, &err));
+        return Err(err);
     }
 
     state.push_log("写入完成", "DONE");
@@ -271,5 +290,23 @@ mod tests {
         assert!(state
             .copy_log()
             .contains("Handshake did not return expected MSNCN bytes"));
+    }
+
+    #[test]
+    fn start_flash_dispatches_background_job_for_selected_port() {
+        let state = AppState::default();
+        state.set_ready_device(
+            "COM4".to_string(),
+            Some("1A86:FE0C".to_string()),
+            Some("serial-123".to_string()),
+        );
+        let dispatched = RefCell::new(Vec::new());
+
+        queue_flash_start(&state, |port_name| {
+            dispatched.borrow_mut().push(port_name);
+        })
+        .unwrap();
+
+        assert_eq!(dispatched.into_inner(), vec!["COM4".to_string()]);
     }
 }
