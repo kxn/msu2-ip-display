@@ -683,7 +683,7 @@ fn netlink_sockaddr(groups: u32) -> libc::sockaddr_nl {
 
 #[cfg(target_os = "linux")]
 fn if_indextoname_string(index: u32) -> std::io::Result<Option<String>> {
-    let mut name = [0i8; libc::IF_NAMESIZE];
+    let mut name = [0 as libc::c_char; libc::IF_NAMESIZE];
     let ptr = unsafe { libc::if_indextoname(index, name.as_mut_ptr()) };
     if ptr.is_null() {
         let err = std::io::Error::last_os_error();
