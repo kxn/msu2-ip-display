@@ -8,6 +8,7 @@ pub mod platform;
 pub mod protocol;
 pub mod serial;
 pub mod service_install;
+pub mod usb_events;
 
 #[cfg(test)]
 mod platform_tests {

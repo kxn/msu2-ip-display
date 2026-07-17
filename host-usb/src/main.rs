@@ -4,7 +4,12 @@ fn main() {
 
     match parse_args(std::env::args().skip(1)) {
         Ok(Command::Run(options)) => {
-            miniboard_ipd::logging::info(&format!("run requested: {:?}", options));
+            miniboard_ipd::logging::info(&format!("starting foreground daemon: {:?}", options));
+            miniboard_ipd::logging::info(&format!(
+                "usb event mode: {:?}",
+                miniboard_ipd::usb_events::choose_event_mode()
+            ));
+            miniboard_ipd::logging::info("runtime loop is added in Task 10");
         }
         Ok(Command::Install(options)) => {
             miniboard_ipd::logging::info(&format!("install requested: {:?}", options));
