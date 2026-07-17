@@ -41,9 +41,28 @@
 
 ### Commit hash
 
-- `9f4bd4c`
+- `ae9ca5d`
 
 ### Self-review notes or concerns
 
 - `SerialSession` is intentionally foundational only. Task 8 does not yet add read/poll/session runtime behavior; the Linux `run` path still stops at logging, consistent with the brief's Task 10 placeholder.
 - Linux-specific serial configuration remains behind `cfg(target_os = "linux")`, so the crate continues to build and test on non-Linux hosts.
+
+### Fix after review
+
+- Updated `host-usb/src/usb_events.rs` so Linux `netlink_socket_available()` now verifies that `NETLINK_KOBJECT_UEVENT` is actually usable by:
+  - creating the netlink socket,
+  - attempting `bind()` with `sockaddr_nl { nl_family: AF_NETLINK, nl_pid: 0, nl_groups: 1 }`,
+  - closing the fd,
+  - returning `true` only when `bind()` succeeds.
+- Kept the non-Linux `choose_event_mode()` path unchanged and left the Linux `sockaddr_nl` / `bind` logic behind `cfg(target_os = "linux")` so Windows builds still compile cleanly.
+- Added a small injectable helper, `netlink_socket_available_with(...)`, plus focused tests that cover both the bind-success and bind-failure cases without requiring a Linux runtime.
+
+### Verification after review
+
+- `cd host-usb; cargo test usb_events::tests -- --nocapture`
+  - Result: passed
+- `cd host-usb; cargo test`
+  - Result: passed
+- `cd host-usb; cargo check`
+  - Result: passed
