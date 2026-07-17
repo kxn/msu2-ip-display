@@ -1,43 +1,58 @@
 <!doctype html>
-<html lang="en">
+<html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
-    <link rel="stylesheet" href="/src/styles.css" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Tauri App</title>
-    <script type="module" src="/src/main.ts" defer></script>
+    <title>MSU2 刷写器</title>
+    <link rel="stylesheet" href="/src/styles.css" />
   </head>
-
   <body>
-    <main class="container">
-      <h1>Welcome to Tauri</h1>
+    <main class="shell">
+      <header class="topbar">
+        <h1>MSU2 刷写器</h1>
+        <span id="statusPill" class="pill warn">未检测到</span>
+      </header>
 
-      <div class="row">
-        <a href="https://vite.dev" target="_blank">
-          <img src="/src/assets/vite.svg" class="logo vite" alt="Vite logo" />
-        </a>
-        <a href="https://tauri.app" target="_blank">
-          <img
-            src="/src/assets/tauri.svg"
-            class="logo tauri"
-            alt="Tauri logo"
-          />
-        </a>
-        <a href="https://www.typescriptlang.org/docs" target="_blank">
-          <img
-            src="/src/assets/typescript.svg"
-            class="logo typescript"
-            alt="typescript logo"
-          />
-        </a>
-      </div>
-      <p>Click on the Tauri logo to learn more about the framework</p>
+      <section class="panel device-panel">
+        <div class="panel-label">设备</div>
+        <div class="device-row">
+          <div class="usb-icon" aria-hidden="true"></div>
+          <div class="device-copy">
+            <div id="deviceName" class="device-name">未连接</div>
+            <div id="devicePort" class="device-port"></div>
+          </div>
+          <div class="meta">
+            <span>VID:PID</span>
+            <strong id="vidPid">-</strong>
+          </div>
+          <div class="meta">
+            <span>ID</span>
+            <strong id="serialId">-</strong>
+          </div>
+          <button id="rescanButton" class="secondary" type="button">重新检测</button>
+        </div>
+      </section>
 
-      <form class="row" id="greet-form">
-        <input id="greet-input" placeholder="Enter a name..." />
-        <button type="submit">Greet</button>
-      </form>
-      <p id="greet-msg"></p>
+      <section class="panel write-panel">
+        <div class="panel-label">写入</div>
+        <div class="write-row">
+          <div class="write-copy">
+            <div id="writeTitle" class="write-title">未连接</div>
+            <div id="writePercent" class="percent"></div>
+          </div>
+          <button id="flashButton" class="primary" type="button" disabled>写入</button>
+        </div>
+        <div class="progress-track">
+          <div id="progressFill" class="progress-fill"></div>
+        </div>
+      </section>
+
+      <section class="record-line">
+        <span id="recordTime">--:--:--</span>
+        <span id="recordText">未连接</span>
+        <button id="copyLogButton" class="link-button hidden" type="button">复制记录</button>
+      </section>
     </main>
+    <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

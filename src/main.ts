@@ -1,22 +1,206 @@
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 
-let greetInputEl: HTMLInputElement | null;
-let greetMsgEl: HTMLElement | null;
+type UiDeviceStatus = {
+  kind: string;
+  title: string;
+  port_name?: string;
+  vid_pid?: string;
+  serial?: string;
+  button_enabled: boolean;
+};
 
-async function greet() {
-  if (greetMsgEl && greetInputEl) {
-    // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-    greetMsgEl.textContent = await invoke("greet", {
-      name: greetInputEl.value,
-    });
+type FlashProgress = {
+  percent: number;
+  display_message: string;
+};
+
+type UiError = {
+  message: string;
+  detail: string;
+};
+
+const statusPill = document.querySelector<HTMLSpanElement>("#statusPill")!;
+const deviceName = document.querySelector<HTMLDivElement>("#deviceName")!;
+const devicePort = document.querySelector<HTMLDivElement>("#devicePort")!;
+const vidPid = document.querySelector<HTMLElement>("#vidPid")!;
+const serialId = document.querySelector<HTMLElement>("#serialId")!;
+const rescanButton = document.querySelector<HTMLButtonElement>("#rescanButton")!;
+const flashButton = document.querySelector<HTMLButtonElement>("#flashButton")!;
+const writeTitle = document.querySelector<HTMLDivElement>("#writeTitle")!;
+const writePercent = document.querySelector<HTMLDivElement>("#writePercent")!;
+const progressFill = document.querySelector<HTMLDivElement>("#progressFill")!;
+const recordTime = document.querySelector<HTMLSpanElement>("#recordTime")!;
+const recordText = document.querySelector<HTMLSpanElement>("#recordText")!;
+const copyLogButton = document.querySelector<HTMLButtonElement>("#copyLogButton")!;
+
+let flashing = false;
+let scanTimer: number | undefined;
+let lastRecord = "";
+
+function nowText(): string {
+  return new Date().toLocaleTimeString("zh-CN", { hour12: false });
+}
+
+function setRecord(text: string, force = false): void {
+  if (!force && text === lastRecord) {
+    return;
+  }
+
+  lastRecord = text;
+  recordTime.textContent = nowText();
+  recordText.textContent = text;
+}
+
+function setPill(text: string, kind: "warn" | "ok" | "info" | "error"): void {
+  statusPill.textContent = text;
+  statusPill.className = `pill ${kind}`;
+}
+
+function setProgress(percent: number): void {
+  const clamped = Math.max(0, Math.min(100, percent));
+  progressFill.style.width = `${clamped}%`;
+}
+
+function setCopyVisible(visible: boolean): void {
+  copyLogButton.classList.toggle("hidden", !visible);
+}
+
+function setWriteIdle(enabled: boolean): void {
+  flashButton.textContent = "写入";
+  flashButton.disabled = !enabled;
+}
+
+function renderReady(status: UiDeviceStatus): void {
+  setPill("设备已连接", "ok");
+  deviceName.textContent = "CH32x035";
+  devicePort.textContent = status.port_name ?? "";
+  vidPid.textContent = status.vid_pid || "-";
+  serialId.textContent = status.serial || "-";
+  writeTitle.textContent = "准备就绪";
+  writePercent.textContent = "";
+  setWriteIdle(status.button_enabled && !flashing);
+  if (!flashing) {
+    setProgress(0);
+    setCopyVisible(false);
+    setRecord("设备就绪");
   }
 }
 
-window.addEventListener("DOMContentLoaded", () => {
-  greetInputEl = document.querySelector("#greet-input");
-  greetMsgEl = document.querySelector("#greet-msg");
-  document.querySelector("#greet-form")?.addEventListener("submit", (e) => {
-    e.preventDefault();
-    greet();
-  });
+function renderNoDevice(): void {
+  flashing = false;
+  setPill("未检测到", "warn");
+  deviceName.textContent = "未连接";
+  devicePort.textContent = "";
+  vidPid.textContent = "-";
+  serialId.textContent = "-";
+  writeTitle.textContent = "未连接";
+  writePercent.textContent = "";
+  setWriteIdle(false);
+  setProgress(0);
+  setCopyVisible(false);
+  setRecord("未连接");
+}
+
+function renderStatus(status: UiDeviceStatus): void {
+  if (status.kind === "Ready") {
+    renderReady(status);
+    return;
+  }
+
+  renderNoDevice();
+}
+
+async function scan(): Promise<void> {
+  if (flashing) {
+    return;
+  }
+
+  try {
+    const status = await invoke<UiDeviceStatus>("scan_devices");
+    renderStatus(status);
+  } catch {
+    renderNoDevice();
+  }
+}
+
+function renderFlashFailure(error: UiError | string): void {
+  const message = typeof error === "string" ? error : error.message || "写入失败";
+  flashing = false;
+  setPill("失败", "error");
+  writeTitle.textContent = "无法写入";
+  writePercent.textContent = "";
+  setWriteIdle(false);
+  setCopyVisible(true);
+  setProgress(0);
+  setRecord(message, true);
+}
+
+async function startFlash(): Promise<void> {
+  flashing = true;
+  flashButton.disabled = true;
+  flashButton.textContent = "写入中";
+  writeTitle.textContent = "写入中";
+  writePercent.textContent = "0%";
+  setPill("写入中", "info");
+  setProgress(0);
+  setCopyVisible(false);
+  setRecord("写入中 0%", true);
+
+  try {
+    await invoke("start_flash");
+  } catch (error) {
+    renderFlashFailure(error as UiError | string);
+  }
+}
+
+rescanButton.addEventListener("click", () => void scan());
+flashButton.addEventListener("click", () => void startFlash());
+copyLogButton.addEventListener("click", async () => {
+  const text = await invoke<string>("copy_log");
+  await navigator.clipboard.writeText(text);
+  setRecord("记录已复制", true);
 });
+
+async function init(): Promise<void> {
+  await listen<UiDeviceStatus>("device-status-changed", (event) => {
+    if (!flashing) {
+      renderStatus(event.payload);
+    }
+  });
+
+  await listen<FlashProgress>("flash-progress", (event) => {
+    const percent = event.payload.percent;
+    writeTitle.textContent = "写入中";
+    writePercent.textContent = `${percent}%`;
+    setProgress(percent);
+    setRecord(`写入中 ${percent}%`, true);
+  });
+
+  await listen<string>("flash-finished", () => {
+    flashing = false;
+    setPill("已完成", "ok");
+    writeTitle.textContent = "完成";
+    writePercent.textContent = "";
+    flashButton.textContent = "重新写入";
+    flashButton.disabled = false;
+    setCopyVisible(true);
+    setProgress(100);
+    setRecord("写入完成", true);
+  });
+
+  await listen<UiError>("flash-failed", (event) => {
+    renderFlashFailure(event.payload);
+  });
+
+  scanTimer = window.setInterval(() => void scan(), 1000);
+  void scan();
+}
+
+window.addEventListener("beforeunload", () => {
+  if (scanTimer !== undefined) {
+    window.clearInterval(scanTimer);
+  }
+});
+
+void init();
