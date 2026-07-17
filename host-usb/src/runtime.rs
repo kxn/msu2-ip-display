@@ -153,6 +153,13 @@ impl<T: RuntimeIo> Runtime<T> {
         self.timeout_counter.record_success();
     }
 
+    #[cfg(any(target_os = "linux", test))]
+    fn recover_after_unexpected_tick_error(&mut self, err: io::Error) {
+        crate::logging::warn(&format!("runtime tick failed: {err}"));
+        self.disconnect_device();
+        self.io.sleep(Duration::from_millis(500));
+    }
+
     fn handle_runtime_error(
         &mut self,
         action: &str,
@@ -241,10 +248,7 @@ pub fn run_forever(options: RunOptions) -> io::Result<()> {
     let mut runtime = Runtime::new(options, LinuxRuntimeIo::new());
     loop {
         if let Err(err) = runtime.tick() {
-            crate::logging::warn(&format!("runtime tick failed: {err}"));
-            runtime.connected = false;
-            runtime.io.disconnect();
-            runtime.io.sleep(Duration::from_millis(500));
+            runtime.recover_after_unexpected_tick_error(err);
         }
     }
 }
@@ -370,6 +374,10 @@ mod tests {
 
     fn disconnected_error() -> io::Error {
         io::Error::from_raw_os_error(libc::EIO)
+    }
+
+    fn other_error() -> io::Error {
+        io::Error::other("unexpected collector failure")
     }
 
     #[test]
@@ -541,5 +549,50 @@ mod tests {
                 .count(),
             2
         );
+    }
+
+    #[test]
+    fn unexpected_tick_error_resets_daemon_so_same_ip_is_redrawn_after_reconnect() {
+        let start = Instant::now();
+        let snapshot = ipv4_snapshot([192, 168, 1, 20]);
+        let io = FakeIo {
+            now: Cell::new(Some(start)),
+            devices: vec![target_device()],
+            snapshot_results: VecDeque::from([
+                Ok(snapshot.clone()),
+                Err(other_error()),
+                Ok(snapshot),
+            ]),
+            send_results: VecDeque::from([Ok(()), Ok(()), Ok(()), Ok(())]),
+            ..FakeIo::default()
+        };
+        let mut runtime = Runtime::new(options(), io);
+
+        runtime.tick().unwrap();
+        runtime.io.set_now(start + Duration::from_secs(1));
+        let err = runtime.tick().unwrap_err();
+        runtime.recover_after_unexpected_tick_error(err);
+        runtime.io.set_now(start + Duration::from_secs(2));
+        runtime.tick().unwrap();
+
+        assert_eq!(
+            runtime
+                .io
+                .events
+                .iter()
+                .filter(|event| event.as_str() == "writes:pending")
+                .count(),
+            2
+        );
+        assert_eq!(
+            runtime
+                .io
+                .events
+                .iter()
+                .filter(|event| event.as_str() == "writes:ip")
+                .count(),
+            2
+        );
+        assert!(runtime.io.events.iter().any(|event| event == "disconnect"));
     }
 }

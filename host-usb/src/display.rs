@@ -41,6 +41,8 @@ const ROW_GAP: u16 = 8;
 const SCREEN_WIDTH: u16 = 160;
 const SCREEN_HEIGHT: u16 = 80;
 const RGB565_GREEN: u16 = 0x07e0;
+const KEEPALIVE_X: u16 = SCREEN_WIDTH - 1;
+const KEEPALIVE_Y: u16 = SCREEN_HEIGHT - 1;
 
 impl DisplayRenderer {
     pub fn pending() -> Vec<WireWrite> {
@@ -82,7 +84,7 @@ impl DisplayRenderer {
     }
 
     pub fn keepalive() -> Vec<WireWrite> {
-        dot_writes(DotGlyph { x: 155, y: 75 })
+        pixel_writes(KEEPALIVE_X, KEEPALIVE_Y, RGB565_GREEN)
     }
 
     pub fn layout_ip(ip: Ipv4Addr) -> IpLayout {
@@ -160,6 +162,21 @@ fn dot_writes(dot: DotGlyph) -> Vec<WireWrite> {
         packet(load_lcd_address_packet(), true),
         WireWrite {
             bytes: write_lcd_data_packet(DOT_SIZE * DOT_SIZE * 2, &dot_bytes).to_vec(),
+            wait_for_echo: false,
+        },
+    ]
+}
+
+fn pixel_writes(x: u16, y: u16, color: u16) -> Vec<WireWrite> {
+    let mut pixel_bytes = [0u8; 256];
+    pixel_bytes[0..2].copy_from_slice(&color.to_be_bytes());
+
+    vec![
+        packet(set_xy_packet(x, y), false),
+        packet(set_size_packet(1, 1), false),
+        packet(load_lcd_address_packet(), true),
+        WireWrite {
+            bytes: write_lcd_data_packet(2, &pixel_bytes).to_vec(),
             wait_for_echo: false,
         },
     ]
@@ -243,12 +260,31 @@ mod tests {
     #[test]
     fn keepalive_dot_stays_within_screen_bounds() {
         let writes = DisplayRenderer::keepalive();
-        assert_eq!(writes[0].bytes, set_xy_packet(155, 75).to_vec());
+        assert_eq!(writes[0].bytes, set_xy_packet(159, 79).to_vec());
+        assert_eq!(writes[1].bytes, set_size_packet(1, 1).to_vec());
+        assert!(159 < SCREEN_WIDTH);
+        assert!(79 < SCREEN_HEIGHT);
+    }
+
+    #[test]
+    fn keepalive_writes_only_one_pixel() {
+        let writes = DisplayRenderer::keepalive();
+        assert_eq!(writes[1].bytes, set_size_packet(1, 1).to_vec());
+
+        let lcd_write = writes
+            .iter()
+            .find(|write| write.bytes.len() == 390)
+            .expect("expected lcd data write");
         assert_eq!(
-            writes[1].bytes,
-            set_size_packet(DOT_SIZE, DOT_SIZE).to_vec()
+            &lcd_write.bytes[384..390],
+            &[0x02, 0x03, 0x08, 0x00, 0x02, 0x00]
         );
-        assert!(155 + DOT_SIZE <= SCREEN_WIDTH);
-        assert!(75 + DOT_SIZE <= SCREEN_HEIGHT);
+
+        let mut pixel_bytes = Vec::new();
+        for chunk in lcd_write.bytes[..384].chunks_exact(6) {
+            pixel_bytes.extend_from_slice(&chunk[2..6]);
+        }
+        assert_eq!(&pixel_bytes[0..2], &RGB565_GREEN.to_be_bytes());
+        assert!(pixel_bytes[2..].iter().all(|byte| *byte == 0));
     }
 }

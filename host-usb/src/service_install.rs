@@ -6,6 +6,8 @@ pub enum InitKind {
     OpenRc,
     OpenWrtProcd,
     SysV,
+    SysVUpdateRcD,
+    SysVChkconfig,
     BusyBox,
     RunitTemplate,
     S6Template,
@@ -60,8 +62,10 @@ pub fn detect_init(probe: &InitProbe) -> InitKind {
         InitKind::Systemd
     } else if probe.has_openrc_runtime || probe.has_rc_service {
         InitKind::OpenRc
-    } else if probe.has_update_rc_d || probe.has_chkconfig {
-        InitKind::SysV
+    } else if probe.has_update_rc_d {
+        InitKind::SysVUpdateRcD
+    } else if probe.has_chkconfig {
+        InitKind::SysVChkconfig
     } else if probe.pid1_comm.as_deref() == Some("init") && probe.has_busybox {
         InitKind::BusyBox
     } else {
@@ -74,7 +78,7 @@ pub fn render_service(kind: InitKind, spec: &InstallSpec) -> ServiceRender {
         InitKind::Systemd => render_systemd(spec),
         InitKind::OpenWrtProcd => render_openwrt(spec),
         InitKind::OpenRc => render_openrc(spec),
-        InitKind::SysV => render_sysv(spec),
+        InitKind::SysV | InitKind::SysVUpdateRcD | InitKind::SysVChkconfig => render_sysv(spec),
         InitKind::BusyBox => render_busybox(spec),
         InitKind::RunitTemplate => render_template("/etc/sv/miniboard-ipd/run", spec),
         InitKind::S6Template => render_template("s6-miniboard-ipd-run", spec),
@@ -112,6 +116,18 @@ pub fn install_commands(kind: InitKind) -> Vec<Vec<String>> {
             "miniboard-ipd".into(),
             "start".into(),
         ]],
+        InitKind::SysVUpdateRcD => vec![
+            vec![
+                "update-rc.d".into(),
+                "miniboard-ipd".into(),
+                "defaults".into(),
+            ],
+            vec!["service".into(), "miniboard-ipd".into(), "start".into()],
+        ],
+        InitKind::SysVChkconfig => vec![
+            vec!["chkconfig".into(), "--add".into(), "miniboard-ipd".into()],
+            vec!["service".into(), "miniboard-ipd".into(), "start".into()],
+        ],
         InitKind::BusyBox => vec![vec!["/etc/init.d/S99miniboard-ipd".into(), "start".into()]],
         _ => Vec::new(),
     }
@@ -143,6 +159,18 @@ pub fn uninstall_commands(kind: InitKind) -> Vec<Vec<String>> {
             "miniboard-ipd".into(),
             "stop".into(),
         ]],
+        InitKind::SysVUpdateRcD => vec![
+            vec!["service".into(), "miniboard-ipd".into(), "stop".into()],
+            vec![
+                "update-rc.d".into(),
+                "miniboard-ipd".into(),
+                "remove".into(),
+            ],
+        ],
+        InitKind::SysVChkconfig => vec![
+            vec!["service".into(), "miniboard-ipd".into(), "stop".into()],
+            vec!["chkconfig".into(), "--del".into(), "miniboard-ipd".into()],
+        ],
         InitKind::BusyBox => vec![vec!["/etc/init.d/S99miniboard-ipd".into(), "stop".into()]],
         _ => Vec::new(),
     }
@@ -165,7 +193,9 @@ pub fn status_command(kind: InitKind) -> Vec<String> {
         ],
         InitKind::OpenRc => vec!["rc-service".into(), "miniboard-ipd".into(), "status".into()],
         InitKind::OpenWrtProcd => vec!["/etc/init.d/miniboard-ipd".into(), "status".into()],
-        InitKind::SysV => vec!["service".into(), "miniboard-ipd".into(), "status".into()],
+        InitKind::SysV | InitKind::SysVUpdateRcD | InitKind::SysVChkconfig => {
+            vec!["service".into(), "miniboard-ipd".into(), "status".into()]
+        }
         InitKind::BusyBox => vec!["pgrep".into(), "-af".into(), "miniboard-ipd".into()],
         _ => vec!["pgrep".into(), "-af".into(), "miniboard-ipd".into()],
     }
@@ -217,7 +247,12 @@ pub fn run_status(kind: InitKind, ops: &mut dyn InstallOps) -> std::io::Result<(
 fn service_needs_executable(kind: InitKind) -> bool {
     matches!(
         kind,
-        InitKind::OpenRc | InitKind::OpenWrtProcd | InitKind::SysV | InitKind::BusyBox
+        InitKind::OpenRc
+            | InitKind::OpenWrtProcd
+            | InitKind::SysV
+            | InitKind::SysVUpdateRcD
+            | InitKind::SysVChkconfig
+            | InitKind::BusyBox
     )
 }
 
@@ -320,8 +355,9 @@ fn render_sysv(spec: &InstallSpec) -> ServiceRender {
     ServiceRender {
         path: "/etc/init.d/miniboard-ipd".to_string(),
         contents: format!(
-            "#!/bin/sh\n### BEGIN INIT INFO\n# Provides: miniboard-ipd\n# Required-Start: $local_fs $network\n# Required-Stop: $local_fs\n# Default-Start: 2 3 4 5\n# Default-Stop: 0 1 6\n# Short-Description: Miniboard IP display daemon\n### END INIT INFO\ncase \"$1\" in\n  start)\n    {} &\n    ;;\n  stop)\n    pkill -f \"{} run\" || true\n    ;;\n  restart)\n    \"$0\" stop\n    \"$0\" start\n    ;;\n  *)\n    echo \"Usage: $0 {{start|stop|restart}}\"\n    exit 1\n    ;;\nesac\n",
+            "#!/bin/sh\n### BEGIN INIT INFO\n# Provides: miniboard-ipd\n# Required-Start: $local_fs $network\n# Required-Stop: $local_fs\n# Default-Start: 2 3 4 5\n# Default-Stop: 0 1 6\n# Short-Description: Miniboard IP display daemon\n### END INIT INFO\ncase \"$1\" in\n  start)\n    {} &\n    ;;\n  stop)\n    pkill -f \"{} run\" || true\n    ;;\n  restart)\n    \"$0\" stop\n    \"$0\" start\n    ;;\n  status)\n    pgrep -af \"{} run\"\n    ;;\n  *)\n    echo \"Usage: $0 {{start|stop|restart|status}}\"\n    exit 1\n    ;;\nesac\n",
             command_line(spec),
+            spec.binary_path,
             spec.binary_path
         ),
     }
@@ -374,6 +410,24 @@ mod tests {
     }
 
     #[test]
+    fn sysv_detection_preserves_update_rc_d_backend() {
+        let probe = InitProbe {
+            has_update_rc_d: true,
+            ..InitProbe::default()
+        };
+        assert_eq!(detect_init(&probe), InitKind::SysVUpdateRcD);
+    }
+
+    #[test]
+    fn sysv_detection_preserves_chkconfig_backend() {
+        let probe = InitProbe {
+            has_chkconfig: true,
+            ..InitProbe::default()
+        };
+        assert_eq!(detect_init(&probe), InitKind::SysVChkconfig);
+    }
+
+    #[test]
     fn systemd_unit_embeds_install_arguments() {
         let render = render_service(InitKind::Systemd, &spec());
         assert_eq!(render.path, "/etc/systemd/system/miniboard-ipd.service");
@@ -404,6 +458,16 @@ mod tests {
         assert!(render
             .contents
             .contains("command_args=\"run --interface eth0 --dhcp-fail-delay-seconds 45\""));
+    }
+
+    #[test]
+    fn sysv_script_supports_status_command() {
+        let render = render_service(InitKind::SysV, &spec());
+        assert!(render.contents.contains("  status)"));
+        assert!(render.contents.contains("pgrep -af"));
+        assert!(render
+            .contents
+            .contains("Usage: $0 {start|stop|restart|status}"));
     }
 }
 
@@ -470,6 +534,28 @@ mod command_tests {
     }
 
     #[test]
+    fn sysv_update_rc_d_install_enables_boot_start_and_starts_service() {
+        assert_eq!(
+            install_commands(InitKind::SysVUpdateRcD),
+            vec![
+                vec!["update-rc.d", "miniboard-ipd", "defaults"],
+                vec!["service", "miniboard-ipd", "start"],
+            ]
+        );
+    }
+
+    #[test]
+    fn sysv_chkconfig_install_enables_boot_start_and_starts_service() {
+        assert_eq!(
+            install_commands(InitKind::SysVChkconfig),
+            vec![
+                vec!["chkconfig", "--add", "miniboard-ipd"],
+                vec!["service", "miniboard-ipd", "start"],
+            ]
+        );
+    }
+
+    #[test]
     fn systemd_uninstall_commands_only_stop_and_disable_before_file_removal() {
         assert_eq!(
             uninstall_commands(InitKind::Systemd),
@@ -483,6 +569,28 @@ mod command_tests {
         assert_eq!(
             post_uninstall_commands(InitKind::Systemd),
             vec![vec!["systemctl", "daemon-reload"]]
+        );
+    }
+
+    #[test]
+    fn sysv_update_rc_d_uninstall_stops_service_and_removes_boot_start() {
+        assert_eq!(
+            uninstall_commands(InitKind::SysVUpdateRcD),
+            vec![
+                vec!["service", "miniboard-ipd", "stop"],
+                vec!["update-rc.d", "miniboard-ipd", "remove"],
+            ]
+        );
+    }
+
+    #[test]
+    fn sysv_chkconfig_uninstall_stops_service_and_removes_boot_start() {
+        assert_eq!(
+            uninstall_commands(InitKind::SysVChkconfig),
+            vec![
+                vec!["service", "miniboard-ipd", "stop"],
+                vec!["chkconfig", "--del", "miniboard-ipd"],
+            ]
         );
     }
 
