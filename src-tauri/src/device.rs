@@ -2,7 +2,9 @@ use std::io::{Read, Write};
 use std::time::{Duration, Instant};
 
 use serde::Serialize;
-use serialport::{SerialPort, SerialPortInfo, SerialPortType};
+use serialport::{
+    DataBits, FlowControl, Parity, SerialPort, SerialPortInfo, SerialPortType, StopBits,
+};
 
 use crate::errors::{AppError, AppResult};
 use crate::protocol::{contains_sequence, HANDSHAKE};
@@ -10,6 +12,25 @@ use crate::protocol::{contains_sequence, HANDSHAKE};
 const TARGET_VID: u16 = 0x1a86;
 const TARGET_PID: u16 = 0xfe0c;
 const BAUD_RATE: u32 = 19_200;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SerialPortSettings {
+    baud_rate: u32,
+    data_bits: DataBits,
+    parity: Parity,
+    stop_bits: StopBits,
+    flow_control: FlowControl,
+}
+
+fn serial_port_settings() -> SerialPortSettings {
+    SerialPortSettings {
+        baud_rate: BAUD_RATE,
+        data_bits: DataBits::Eight,
+        parity: Parity::None,
+        stop_bits: StopBits::One,
+        flow_control: FlowControl::None,
+    }
+}
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct DeviceInfo {
@@ -79,7 +100,7 @@ pub fn matches_target_usb(vid: Option<u16>, pid: Option<u16>, text: Option<&str>
     };
 
     let lower = text.to_ascii_lowercase();
-    lower.contains("ch32") || lower.contains("ch32x035") || lower.contains("wch")
+    lower.contains("ch32") || lower.contains("ch32x035")
 }
 
 pub fn info_from_port(port: &SerialPortInfo) -> Option<DeviceInfo> {
@@ -123,7 +144,12 @@ pub fn scan_candidates() -> AppResult<Vec<DeviceInfo>> {
 }
 
 pub fn open_serial_port(port_name: &str) -> AppResult<SerialPortIo> {
-    let port = serialport::new(port_name, BAUD_RATE)
+    let settings = serial_port_settings();
+    let port = serialport::new(port_name, settings.baud_rate)
+        .data_bits(settings.data_bits)
+        .parity(settings.parity)
+        .stop_bits(settings.stop_bits)
+        .flow_control(settings.flow_control)
         .timeout(Duration::from_millis(100))
         .open()
         .map_err(|_| AppError::PortBusy(port_name.to_string()))?;
@@ -144,6 +170,7 @@ pub fn handshake<P: PortIo>(port: &mut P) -> AppResult<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serialport::{DataBits, FlowControl, Parity, StopBits};
 
     #[derive(Default)]
     struct MockPort {
@@ -177,8 +204,24 @@ mod tests {
     }
 
     #[test]
+    fn task4_candidate_matching_rejects_vendor_only_wch_text() {
+        assert!(!matches_target_usb(None, None, Some("WCH USB-SERIAL")));
+    }
+
+    #[test]
     fn candidate_matching_rejects_unrelated_port() {
         assert!(!matches_target_usb(Some(0x1234), Some(0xabcd), Some("Other")));
+    }
+
+    #[test]
+    fn task4_serial_port_settings_enforce_19200_8n1() {
+        let settings = serial_port_settings();
+
+        assert_eq!(settings.baud_rate, 19_200);
+        assert_eq!(settings.data_bits, DataBits::Eight);
+        assert_eq!(settings.parity, Parity::None);
+        assert_eq!(settings.stop_bits, StopBits::One);
+        assert_eq!(settings.flow_control, FlowControl::None);
     }
 
     #[test]
