@@ -95,6 +95,10 @@ pub fn matches_target_usb(vid: Option<u16>, pid: Option<u16>, text: Option<&str>
         return true;
     }
 
+    if vid.is_some() && pid.is_some() {
+        return false;
+    }
+
     let Some(text) = text else {
         return false;
     };
@@ -211,6 +215,31 @@ mod tests {
     #[test]
     fn candidate_matching_rejects_unrelated_port() {
         assert!(!matches_target_usb(Some(0x1234), Some(0xabcd), Some("Other")));
+    }
+
+    #[test]
+    fn task4_candidate_matching_rejects_non_target_vid_pid_even_with_ch32_text() {
+        assert!(!matches_target_usb(
+            Some(0x1234),
+            Some(0xabcd),
+            Some("CH32x035")
+        ));
+    }
+
+    #[test]
+    fn task4_info_from_port_rejects_non_target_usb_ids_even_with_matching_product_text() {
+        let port = SerialPortInfo {
+            port_name: "COM9".to_string(),
+            port_type: SerialPortType::UsbPort(serialport::UsbPortInfo {
+                vid: 0x1234,
+                pid: 0xabcd,
+                serial_number: Some("SN123".to_string()),
+                manufacturer: Some("WCH".to_string()),
+                product: Some("CH32x035".to_string()),
+            }),
+        };
+
+        assert_eq!(info_from_port(&port), None);
     }
 
     #[test]
