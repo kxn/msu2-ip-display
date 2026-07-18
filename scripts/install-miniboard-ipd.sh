@@ -57,6 +57,9 @@ make_tmp_dir() {
 }
 
 cleanup() {
+  if [ "${INSTALL_TMP:-}" ]; then
+    rm -f "$INSTALL_TMP"
+  fi
   if [ "${TMP_DIR:-}" ]; then
     rm -rf "$TMP_DIR"
   fi
@@ -113,9 +116,13 @@ curl -fsSL "$RELEASE_BASE/$ASSET.sha256" -o "$CHECKSUM"
 tar -xzf "$ARCHIVE" -C "$TMP_DIR"
 [ -f "$TMP_DIR/miniboard-ipd" ] || die "archive did not contain miniboard-ipd"
 
-mkdir -p "$(dirname "$INSTALL_PATH")"
-cp "$TMP_DIR/miniboard-ipd" "$INSTALL_PATH"
-chmod 0755 "$INSTALL_PATH"
+INSTALL_DIR=$(dirname "$INSTALL_PATH")
+mkdir -p "$INSTALL_DIR"
+INSTALL_TMP="$INSTALL_DIR/.miniboard-ipd.$$"
+cp "$TMP_DIR/miniboard-ipd" "$INSTALL_TMP"
+chmod 0755 "$INSTALL_TMP"
+mv -f "$INSTALL_TMP" "$INSTALL_PATH"
+INSTALL_TMP=
 
 echo "Installed $INSTALL_PATH"
 

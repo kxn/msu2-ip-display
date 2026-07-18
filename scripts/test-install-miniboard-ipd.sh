@@ -79,6 +79,28 @@ CURL
   export FIXTURE_DIR
 }
 
+make_fake_busy_cp() {
+  fakebin=$1
+
+  cat > "$fakebin/cp" <<'CP'
+#!/bin/sh
+set -eu
+
+last=
+for arg in "$@"; do
+  last=$arg
+done
+
+if [ "${BUSY_TARGET:-}" = "$last" ]; then
+  echo "Text file busy" >&2
+  exit 26
+fi
+
+/bin/cp "$@"
+CP
+  chmod +x "$fakebin/cp"
+}
+
 run_in_temp() {
   tmp=${TMPDIR:-/tmp}/msu2-install-test-$$-$1
   rm -rf "$tmp"
@@ -140,6 +162,36 @@ test_no_service_only_installs_binary() {
   [ ! -s "$log" ] || fail "expected no service registration call"
 }
 
+test_replaces_busy_existing_binary_without_direct_copy_to_install_path() {
+  tmp=$(run_in_temp busy-target)
+  fixture_dir=$tmp/fixtures
+  fakebin=$tmp/fakebin
+  install_root=$tmp/root
+  log=$tmp/install.log
+  curl_log=$tmp/curl.log
+  installed=$install_root/usr/local/bin/miniboard-ipd
+  mkdir -p "$fixture_dir" "$(dirname "$installed")"
+  make_fixture linux-amd64 "$fixture_dir"
+  make_fake_curl "$fakebin" "$fixture_dir"
+  make_fake_busy_cp "$fakebin"
+  : > "$log"
+  : > "$curl_log"
+  echo "old binary" > "$installed"
+  chmod +x "$installed"
+
+  PATH="$fakebin:$PATH" \
+  MSU2_INSTALL_ROOT="$install_root" \
+  MSU2_INSTALLER_ARCH=x86_64 \
+  MSU2_RELEASE_BASE=https://example.invalid/releases/latest/download \
+  INSTALL_LOG="$log" \
+  CURL_LOG="$curl_log" \
+  BUSY_TARGET="$installed" \
+    sh "$INSTALLER" --no-service
+
+  assert_file "$installed"
+  assert_contains "echo \"\$0 \$*\" >> \"\$INSTALL_LOG\"" "$installed"
+}
+
 test_unsupported_arch_fails_before_download() {
   tmp=$(run_in_temp unsupported)
   fakebin=$tmp/fakebin
@@ -167,6 +219,7 @@ CURL
 
 test_installs_matching_arch_and_registers_service
 test_no_service_only_installs_binary
+test_replaces_busy_existing_binary_without_direct_copy_to_install_path
 test_unsupported_arch_fails_before_download
 
 echo "install-miniboard-ipd tests passed"
