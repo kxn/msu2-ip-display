@@ -34,6 +34,7 @@ const recordText = document.querySelector<HTMLSpanElement>("#recordText")!;
 const copyLogButton = document.querySelector<HTMLButtonElement>("#copyLogButton")!;
 
 let flashing = false;
+let backendPhase = "NoDevice";
 let scanTimer: number | undefined;
 let lastRecord = "";
 
@@ -71,6 +72,7 @@ function setWriteIdle(enabled: boolean): void {
 }
 
 function renderReady(status: UiDeviceStatus): void {
+  flashing = false;
   setPill("设备已连接", "ok");
   deviceName.textContent = status.device_name || "CH32x035";
   devicePort.textContent = status.port_name ?? "";
@@ -82,6 +84,37 @@ function renderReady(status: UiDeviceStatus): void {
     setCopyVisible(false);
     setRecord("设备就绪");
   }
+}
+
+function renderFlashing(status: UiDeviceStatus, previousPhase: string): void {
+  flashing = true;
+  setPill("写入中", "info");
+  deviceName.textContent = status.device_name || "CH32x035";
+  devicePort.textContent = status.port_name ?? "";
+  writeTitle.textContent = "写入中";
+  flashButton.textContent = "写入中";
+  flashButton.disabled = true;
+  setCopyVisible(false);
+
+  if (previousPhase !== "Flashing") {
+    writePercent.textContent = "0%";
+    setProgress(0);
+    setRecord("写入中 0%", true);
+  }
+}
+
+function renderDone(status: UiDeviceStatus): void {
+  flashing = false;
+  setPill("已完成", "ok");
+  deviceName.textContent = status.device_name || "CH32x035";
+  devicePort.textContent = status.port_name ?? "";
+  writeTitle.textContent = "完成";
+  writePercent.textContent = "";
+  flashButton.textContent = "重新写入";
+  flashButton.disabled = !status.button_enabled;
+  setCopyVisible(true);
+  setProgress(100);
+  setRecord("写入完成");
 }
 
 function renderNoDevice(status?: UiDeviceStatus): void {
@@ -98,6 +131,20 @@ function renderNoDevice(status?: UiDeviceStatus): void {
   setRecord(title);
 }
 
+function renderError(status: UiDeviceStatus): void {
+  const title = status.title || "无法写入";
+  flashing = false;
+  setPill("失败", "error");
+  deviceName.textContent = title;
+  devicePort.textContent = status.port_name ?? "";
+  writeTitle.textContent = title;
+  writePercent.textContent = "";
+  setWriteIdle(false);
+  setProgress(0);
+  setCopyVisible(true);
+  setRecord(title, true);
+}
+
 function renderOtherStatus(status: UiDeviceStatus): void {
   const title = status.title || "未连接";
   setPill(title, status.button_enabled ? "info" : "warn");
@@ -112,9 +159,21 @@ function renderOtherStatus(status: UiDeviceStatus): void {
 }
 
 function renderStatus(status: UiDeviceStatus): void {
+  const previousPhase = backendPhase;
+  backendPhase = status.kind;
+
   switch (status.kind) {
     case "Ready":
       renderReady(status);
+      return;
+    case "Flashing":
+      renderFlashing(status, previousPhase);
+      return;
+    case "Done":
+      renderDone(status);
+      return;
+    case "Error":
+      renderError(status);
       return;
     case "NoDevice":
       renderNoDevice(status);
@@ -125,20 +184,18 @@ function renderStatus(status: UiDeviceStatus): void {
 }
 
 async function scan(): Promise<void> {
-  if (flashing) {
-    return;
-  }
-
   try {
     const status = await invoke<UiDeviceStatus>("scan_devices");
     renderStatus(status);
   } catch {
+    backendPhase = "NoDevice";
     renderNoDevice();
   }
 }
 
 function renderFlashFailure(error: UiError | string): void {
   const message = typeof error === "string" ? error : error.message || "写入失败";
+  backendPhase = "Error";
   flashing = false;
   setPill("失败", "error");
   writeTitle.textContent = "无法写入";
@@ -161,6 +218,11 @@ async function watchEvent<T>(
 }
 
 async function startFlash(): Promise<void> {
+  if (backendPhase !== "Ready" && backendPhase !== "Done") {
+    return;
+  }
+
+  backendPhase = "Flashing";
   flashing = true;
   flashButton.disabled = true;
   flashButton.textContent = "写入中";
@@ -190,9 +252,7 @@ async function init(): Promise<void> {
   setRecord("未连接", true);
 
   await watchEvent<UiDeviceStatus>("device-status-changed", (event) => {
-    if (!flashing) {
-      renderStatus(event.payload);
-    }
+    renderStatus(event.payload);
   });
 
   await watchEvent<FlashProgress>("flash-progress", (event) => {
@@ -204,6 +264,7 @@ async function init(): Promise<void> {
   });
 
   await watchEvent<string>("flash-finished", () => {
+    backendPhase = "Done";
     flashing = false;
     setPill("已完成", "ok");
     writeTitle.textContent = "完成";

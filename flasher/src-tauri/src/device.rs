@@ -200,8 +200,8 @@ pub fn handshake<P: PortIo>(port: &mut P) -> AppResult<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{cell::Cell, io};
     use serialport::{DataBits, FlowControl, Parity, StopBits};
+    use std::{cell::Cell, io};
 
     #[derive(Default)]
     struct MockPort {
@@ -226,7 +226,11 @@ mod tests {
 
     #[test]
     fn candidate_matching_accepts_verified_vid_pid() {
-        assert!(matches_target_usb(Some(0x1a86), Some(0xfe0c), Some("CH32x035")));
+        assert!(matches_target_usb(
+            Some(0x1a86),
+            Some(0xfe0c),
+            Some("CH32x035")
+        ));
     }
 
     #[test]
@@ -241,7 +245,11 @@ mod tests {
 
     #[test]
     fn candidate_matching_rejects_unrelated_port() {
-        assert!(!matches_target_usb(Some(0x1234), Some(0xabcd), Some("Other")));
+        assert!(!matches_target_usb(
+            Some(0x1234),
+            Some(0xabcd),
+            Some("Other")
+        ));
     }
 
     #[test]

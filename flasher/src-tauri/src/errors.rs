@@ -7,6 +7,8 @@ pub type AppResult<T> = Result<T, AppError>;
 pub enum AppError {
     #[error("未连接")]
     NoDevice,
+    #[error("正在写入")]
+    FlashAlreadyRunning,
     #[error("{0} 被占用")]
     PortBusy(String),
     #[error("设备无响应")]
@@ -35,6 +37,7 @@ impl AppError {
     pub fn detail(&self) -> String {
         match self {
             AppError::NoDevice => "No target serial device found".to_string(),
+            AppError::FlashAlreadyRunning => "Flash job is already running".to_string(),
             AppError::PortBusy(port) => format!("Failed to open serial port {port}"),
             AppError::HandshakeFailed => {
                 "Handshake did not return expected MSNCN bytes".to_string()

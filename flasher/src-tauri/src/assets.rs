@@ -1,6 +1,8 @@
 use thiserror::Error;
 
 pub const IMAGE_BYTES: usize = 25_600;
+pub const OFFLINE_FRAME_COUNT: usize = 36;
+pub const OFFLINE_ANIMATION_BYTES: usize = IMAGE_BYTES * OFFLINE_FRAME_COUNT;
 pub const PAGES_PER_IMAGE: u16 = 100;
 pub const DHCP_FAILED_PAGE: u16 = 3726;
 pub const ACQUIRING_PAGE: u16 = 3826;
@@ -15,7 +17,9 @@ pub enum AssetError {
         actual: usize,
         expected: usize,
     },
-    #[error("{label} would end at page {end_page}, which reaches preserved page {preserved_start}")]
+    #[error(
+        "{label} would end at page {end_page}, which reaches preserved page {preserved_start}"
+    )]
     LayoutOverlapsPreservedPages {
         label: &'static str,
         end_page: u16,
@@ -38,15 +42,23 @@ impl<'a> FlashImage<'a> {
 
 #[derive(Debug, Clone, Copy)]
 pub struct EmbeddedAssets {
-    pub offline: &'static [u8],
+    pub offline_animation: &'static [u8],
     pub acquiring: &'static [u8],
     pub dhcp_failed: &'static [u8],
     pub ip_bg: &'static [u8],
 }
 
+impl EmbeddedAssets {
+    pub fn offline_frame(&self, frame: usize) -> &'static [u8] {
+        let start = frame * IMAGE_BYTES;
+        let end = start + IMAGE_BYTES;
+        &self.offline_animation[start..end]
+    }
+}
+
 pub fn embedded_assets() -> EmbeddedAssets {
     EmbeddedAssets {
-        offline: include_bytes!("../assets/offline.rgb565be"),
+        offline_animation: include_bytes!("../assets/offline_animation.rgb565be"),
         acquiring: include_bytes!("../assets/acquiring.rgb565be"),
         dhcp_failed: include_bytes!("../assets/dhcp_failed.rgb565be"),
         ip_bg: include_bytes!("../assets/ip_bg.rgb565be"),
@@ -66,13 +78,13 @@ pub fn validate_image(label: &'static str, bytes: &[u8]) -> Result<(), AssetErro
 }
 
 pub fn fixed_flash_plan<'a>(assets: &'a EmbeddedAssets) -> Vec<FlashImage<'a>> {
-    let mut plan = Vec::with_capacity(39);
+    let mut plan = Vec::with_capacity(OFFLINE_FRAME_COUNT + 3);
 
-    for frame in 0..36u16 {
+    for frame in 0..OFFLINE_FRAME_COUNT {
         plan.push(FlashImage {
             label: "offline",
-            start_page: frame * PAGES_PER_IMAGE,
-            bytes: assets.offline,
+            start_page: (frame as u16) * PAGES_PER_IMAGE,
+            bytes: assets.offline_frame(frame),
         });
     }
 
@@ -119,7 +131,7 @@ mod tests {
     #[test]
     fn embedded_assets_have_verified_size() {
         let assets = embedded_assets();
-        assert_eq!(assets.offline.len(), IMAGE_BYTES);
+        assert_eq!(assets.offline_animation.len(), OFFLINE_ANIMATION_BYTES);
         assert_eq!(assets.acquiring.len(), IMAGE_BYTES);
         assert_eq!(assets.dhcp_failed.len(), IMAGE_BYTES);
         assert_eq!(assets.ip_bg.len(), IMAGE_BYTES);
@@ -129,7 +141,7 @@ mod tests {
     fn fixed_plan_has_39_images_and_preserves_font_pages() {
         let assets = embedded_assets();
         let plan = fixed_flash_plan(&assets);
-        assert_eq!(plan.len(), 39);
+        assert_eq!(plan.len(), OFFLINE_FRAME_COUNT + 3);
         assert_eq!(plan[0].start_page, 0);
         assert_eq!(plan[35].start_page, 3500);
         assert_eq!(plan[36].start_page, DHCP_FAILED_PAGE);
@@ -154,6 +166,39 @@ mod tests {
         assert_eq!(item.start_page, DHCP_FAILED_PAGE);
         assert_eq!(item.end_page(), 3825);
         assert_eq!(item.bytes.len(), IMAGE_BYTES);
+    }
+
+    #[test]
+    fn fixed_plan_uses_distinct_offline_animation_frames() {
+        let assets = embedded_assets();
+        let plan = fixed_flash_plan(&assets);
+        let offline_frames = &plan[..36];
+        let first_frame = offline_frames[0].bytes;
+
+        assert!(
+            offline_frames.iter().any(|item| item.bytes != first_frame),
+            "offline animation should not flash the same image into every frame"
+        );
+    }
+
+    #[test]
+    fn fixed_plan_uses_hard_cut_offline_blink_frames() {
+        const VISIBLE_OFFLINE: &[u8] = include_bytes!("../assets/offline.rgb565be");
+
+        let assets = embedded_assets();
+        let plan = fixed_flash_plan(&assets);
+        let offline_frames = &plan[..36];
+
+        assert!(
+            offline_frames
+                .iter()
+                .any(|item| item.bytes == VISIBLE_OFFLINE),
+            "offline animation should include fully visible 未连接 frames"
+        );
+        assert!(
+            offline_frames.iter().any(|item| item.bytes == assets.ip_bg),
+            "offline animation should include fully blank background frames"
+        );
     }
 
     #[test]

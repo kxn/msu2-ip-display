@@ -1,4 +1,5 @@
 use crate::device::PortIo;
+use crate::errors::AppResult;
 use crate::flasher::{write_lcd_region, RetryPolicy};
 
 const GREEN: (u8, u8, u8) = (51, 255, 127);
@@ -16,6 +17,7 @@ const PERCENT_BYTES: usize = (PERCENT_WIDTH as usize) * (PERCENT_HEIGHT as usize
 const INITIAL_SCREEN: &[u8] = include_bytes!("../assets/flash_status_screen_initial.rgb565be");
 const DONE_SCREEN: &[u8] = include_bytes!("../assets/flash_status_screen_done.rgb565be");
 const PERCENT_STRIP: &[u8] = include_bytes!("../assets/flash_status_percent_strip.rgb565be");
+const WAITING_SCREEN: &[u8] = include_bytes!("../assets/waiting_to_flash.rgb565be");
 
 struct RegionAsset {
     x: u16,
@@ -40,6 +42,48 @@ const FULL_DONE_SCREEN: RegionAsset = RegionAsset {
     height: SCREEN_HEIGHT,
     bytes: DONE_SCREEN,
 };
+
+const FULL_WAITING_SCREEN: RegionAsset = RegionAsset {
+    x: 0,
+    y: 0,
+    width: SCREEN_WIDTH,
+    height: SCREEN_HEIGHT,
+    bytes: WAITING_SCREEN,
+};
+
+pub fn show_waiting_to_flash<P: PortIo>(port: &mut P) -> AppResult<()> {
+    write_full_screen(port, &FULL_WAITING_SCREEN)
+}
+
+pub fn show_flash_done<P: PortIo>(port: &mut P) -> AppResult<()> {
+    write_full_screen(port, &FULL_DONE_SCREEN)
+}
+
+pub fn keepalive_pixel<P: PortIo>(port: &mut P) -> AppResult<()> {
+    write_lcd_region(
+        port,
+        159,
+        79,
+        1,
+        1,
+        &[0x00, 0x00],
+        RetryPolicy { attempts: 1 },
+    )
+}
+
+fn write_full_screen<P: PortIo>(port: &mut P, asset: &RegionAsset) -> AppResult<()> {
+    write_lcd_region(
+        port,
+        asset.x,
+        asset.y,
+        asset.width,
+        asset.height,
+        asset.bytes,
+        RetryPolicy { attempts: 1 },
+    )?;
+    port.read_idle(250, 40)?;
+    Ok(())
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ScreenStatus {
@@ -182,12 +226,14 @@ mod tests {
     use super::*;
     use crate::device::PortIo;
     use crate::errors::{AppError, AppResult};
+    use crate::protocol::{load_lcd_address_packet, set_size_packet, set_xy_packet};
     use std::collections::VecDeque;
 
     #[derive(Default)]
     struct MockPort {
         writes: Vec<Vec<u8>>,
         reads: VecDeque<Vec<u8>>,
+        read_calls: Vec<(u64, u64)>,
         fail_on_write: Option<usize>,
     }
 
@@ -196,6 +242,7 @@ mod tests {
             Self {
                 writes: Vec::new(),
                 reads: VecDeque::from(vec![vec![], vec![], vec![0xde, 0xad]]),
+                read_calls: Vec::new(),
                 fail_on_write: None,
             }
         }
@@ -204,6 +251,7 @@ mod tests {
             Self {
                 writes: Vec::new(),
                 reads: VecDeque::new(),
+                read_calls: Vec::new(),
                 fail_on_write: Some(write_number),
             }
         }
@@ -218,7 +266,8 @@ mod tests {
             Ok(())
         }
 
-        fn read_idle(&mut self, _total_ms: u64, _idle_ms: u64) -> AppResult<Vec<u8>> {
+        fn read_idle(&mut self, total_ms: u64, idle_ms: u64) -> AppResult<Vec<u8>> {
+            self.read_calls.push((total_ms, idle_ms));
             if let Some(reply) = self.reads.pop_front() {
                 return Ok(reply);
             }
@@ -303,5 +352,45 @@ mod tests {
         status.update(&mut port, 50);
 
         assert_eq!(port.writes.len(), writes_after_failure);
+    }
+
+    #[test]
+    fn waiting_to_flash_writes_full_screen_once() {
+        let mut port = MockPort::default();
+
+        show_waiting_to_flash(&mut port).unwrap();
+
+        assert_eq!(port.writes.len(), 103);
+        assert_eq!(port.writes[0], set_xy_packet(0, 0).to_vec());
+        assert_eq!(port.writes[1], set_size_packet(160, 80).to_vec());
+        assert_eq!(port.writes[2], load_lcd_address_packet().to_vec());
+        assert_eq!(port.read_calls, vec![(300, 40), (250, 40)]);
+    }
+
+    #[test]
+    fn flash_done_writes_full_screen_and_settles() {
+        let mut port = MockPort::default();
+
+        show_flash_done(&mut port).unwrap();
+
+        assert_eq!(port.writes.len(), 103);
+        assert_eq!(port.writes[0], set_xy_packet(0, 0).to_vec());
+        assert_eq!(port.writes[1], set_size_packet(160, 80).to_vec());
+        assert_eq!(port.writes[2], load_lcd_address_packet().to_vec());
+        assert_eq!(port.read_calls, vec![(300, 40), (250, 40)]);
+    }
+
+    #[test]
+    fn keepalive_pixel_writes_one_black_pixel() {
+        let mut port = MockPort::default();
+
+        keepalive_pixel(&mut port).unwrap();
+
+        assert_eq!(port.writes.len(), 4);
+        assert_eq!(port.writes[0], set_xy_packet(159, 79).to_vec());
+        assert_eq!(port.writes[1], set_size_packet(1, 1).to_vec());
+        assert_eq!(port.writes[2], load_lcd_address_packet().to_vec());
+        assert_eq!(&port.writes[3][0..6], &[0x04, 0x00, 0x00, 0x00, 0xff, 0xff]);
+        assert_eq!(port.read_calls, vec![(300, 40)]);
     }
 }
