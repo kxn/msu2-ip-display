@@ -1,0 +1,155 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing tag to release, for example v0.1.0
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+
+jobs:
+  host-usb:
+    name: Host USB release (${{ matrix.name }})
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-amd64
+            target: x86_64-unknown-linux-musl
+          - name: linux-arm64
+            target: aarch64-unknown-linux-musl
+          - name: linux-arm32
+            target: armv7-unknown-linux-musleabihf
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+
+      - name: Install cross
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cross
+
+      - name: Build host binary
+        working-directory: host-usb
+        run: cross build --release --target ${{ matrix.target }}
+
+      - name: Package host binary
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          cp "host-usb/target/${{ matrix.target }}/release/miniboard-ipd" "dist/miniboard-ipd"
+          tar -C dist -czf "miniboard-ipd-${{ matrix.name }}.tar.gz" miniboard-ipd
+          sha256sum "miniboard-ipd-${{ matrix.name }}.tar.gz" > "miniboard-ipd-${{ matrix.name }}.tar.gz.sha256"
+
+      - name: Upload host workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: miniboard-ipd-${{ matrix.name }}
+          path: |
+            miniboard-ipd-${{ matrix.name }}.tar.gz
+            miniboard-ipd-${{ matrix.name }}.tar.gz.sha256
+          if-no-files-found: error
+
+  flasher:
+    name: Flasher release (${{ matrix.name }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: windows
+            runner: windows-latest
+            args: ""
+          - name: linux
+            runner: ubuntu-22.04
+            args: ""
+          - name: macos-x64
+            runner: macos-latest
+            args: --target x86_64-apple-darwin
+          - name: macos-arm64
+            runner: macos-latest
+            args: --target aarch64-apple-darwin
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: npm
+          cache-dependency-path: flasher/package-lock.json
+
+      - name: Install Rust macOS targets
+        if: startsWith(matrix.name, 'macos-')
+        run: rustup target add x86_64-apple-darwin aarch64-apple-darwin
+
+      - name: Install Linux Tauri dependencies
+        if: matrix.runner == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf xdg-utils
+
+      - name: Install frontend dependencies
+        working-directory: flasher
+        run: npm ci
+
+      - name: Test Rust backend
+        working-directory: flasher/src-tauri
+        run: cargo test
+
+      - name: Build Tauri bundle
+        uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: flasher
+          args: ${{ matrix.args }}
+          uploadWorkflowArtifacts: true
+          workflowArtifactNamePattern: msu2-flasher-${{ matrix.name }}-[bundle]
+
+  publish:
+    name: Publish GitHub release
+    runs-on: ubuntu-22.04
+    needs:
+      - host-usb
+      - flasher
+    permissions:
+      contents: write
+    steps:
+      - name: Download workflow artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+
+      - name: Create or update release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ env.RELEASE_TAG }}
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release edit "$TAG" --title "$TAG" --draft=false --prerelease=false
+          else
+            gh release create "$TAG" --title "$TAG" --generate-notes
+          fi
+
+          find release-assets -type f -print0 | while IFS= read -r -d '' file; do
+            gh release upload "$TAG" "$file" --clobber
+          done
