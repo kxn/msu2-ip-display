@@ -249,7 +249,9 @@ pub fn preview_pages<P: PortIo>(port: &mut P) -> AppResult<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::assets::{FlashImage, IMAGE_BYTES, PAGES_PER_IMAGE};
+    use crate::assets::{
+        FlashImage, HOST_IP_BG_PAGE, HOST_PENDING_PAGE, IMAGE_BYTES, PAGES_PER_IMAGE,
+    };
     use std::collections::VecDeque;
 
     struct MockPort {
@@ -305,7 +307,7 @@ mod tests {
         let image = vec![0x5a; IMAGE_BYTES];
         let flash_image = FlashImage {
             label: "test",
-            start_page: 3826,
+            start_page: HOST_PENDING_PAGE,
             page_count: PAGES_PER_IMAGE,
             bytes: &image,
         };
@@ -315,14 +317,14 @@ mod tests {
         flash_images(&mut port, &[flash_image], |event| progress.push(event)).unwrap();
 
         assert_eq!(port.writes.len(), 101);
-        assert_eq!(port.writes[0], vec![0x03, 0x02, 0x0e, 0xf2, 0x00, 0x64]);
+        assert_eq!(port.writes[0], vec![0x03, 0x02, 0x01, 0x2c, 0x00, 0x64]);
         assert_eq!(
             &port.writes[1][384..390],
-            &[0x03, 0x03, 0x00, 0x0e, 0xf2, 0x01]
+            &[0x03, 0x03, 0x00, 0x01, 0x2c, 0x01]
         );
         assert_eq!(
             &port.writes[100][384..390],
-            &[0x03, 0x03, 0x00, 0x0f, 0x55, 0x01]
+            &[0x03, 0x03, 0x00, 0x01, 0x8f, 0x01]
         );
         assert_eq!(progress.last().unwrap().percent, 100);
     }
@@ -447,13 +449,13 @@ mod tests {
         let images = [
             FlashImage {
                 label: "good",
-                start_page: 3826,
+                start_page: HOST_PENDING_PAGE,
                 page_count: PAGES_PER_IMAGE,
                 bytes: &good,
             },
             FlashImage {
                 label: "bad",
-                start_page: 3926,
+                start_page: HOST_IP_BG_PAGE,
                 page_count: PAGES_PER_IMAGE,
                 bytes: &bad,
             },
@@ -471,7 +473,7 @@ mod tests {
         let image = vec![0x5a; IMAGE_BYTES];
         let flash_image = FlashImage {
             label: "test",
-            start_page: 3826,
+            start_page: HOST_PENDING_PAGE,
             page_count: PAGES_PER_IMAGE,
             bytes: &image,
         };
@@ -487,11 +489,11 @@ mod tests {
         assert_eq!(port.writes.len(), 102);
         assert_eq!(
             &port.writes[1][384..390],
-            &[0x03, 0x03, 0x00, 0x0e, 0xf2, 0x01]
+            &[0x03, 0x03, 0x00, 0x01, 0x2c, 0x01]
         );
         assert_eq!(
             &port.writes[2][384..390],
-            &[0x03, 0x03, 0x00, 0x0e, 0xf2, 0x01]
+            &[0x03, 0x03, 0x00, 0x01, 0x2c, 0x01]
         );
     }
 
@@ -500,7 +502,7 @@ mod tests {
         let image = vec![0x5a; IMAGE_BYTES];
         let flash_image = FlashImage {
             label: "test",
-            start_page: 3826,
+            start_page: HOST_PENDING_PAGE,
             page_count: PAGES_PER_IMAGE,
             bytes: &image,
         };
@@ -522,7 +524,7 @@ mod tests {
         let image = vec![0x5a; IMAGE_BYTES];
         let flash_image = FlashImage {
             label: "test",
-            start_page: 3826,
+            start_page: HOST_PENDING_PAGE,
             page_count: PAGES_PER_IMAGE,
             bytes: &image,
         };
@@ -533,9 +535,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(progress.last().unwrap().percent, 100);
-        assert!(port
-            .writes
-            .iter()
-            .any(|packet| packet == &erase_flash_pages_packet(3826, PAGES_PER_IMAGE).to_vec()));
+        assert!(port.writes.iter().any(|packet| packet
+            == &erase_flash_pages_packet(HOST_PENDING_PAGE, PAGES_PER_IMAGE).to_vec()));
     }
 }

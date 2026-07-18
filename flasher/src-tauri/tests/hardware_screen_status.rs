@@ -1,7 +1,7 @@
 use std::{thread, time::Duration};
 
 use msu2_flasher_lib::{
-    assets::{embedded_assets, FlashImage, PAGES_PER_IMAGE},
+    assets::{embedded_assets, FlashImage, HOST_PENDING_PAGE, PAGES_PER_IMAGE},
     device::{handshake, open_serial_port, scan_candidates},
     flasher::{flash_images_with_screen_status, preview_pages},
     screen_status::ScreenStatus,
@@ -52,7 +52,7 @@ fn hardware_one_image_flash_with_screen_status_smoke() {
     let assets = embedded_assets();
     let plan = [FlashImage {
         label: "acquiring",
-        start_page: 3826,
+        start_page: HOST_PENDING_PAGE,
         page_count: PAGES_PER_IMAGE,
         bytes: assets.acquiring,
     }];

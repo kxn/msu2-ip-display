@@ -104,6 +104,8 @@ pub fn contains_sequence(haystack: &[u8], needle: &[u8]) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use crate::assets::{HOST_IP_BG_PAGE, HOST_PENDING_PAGE};
+
     use super::*;
 
     #[test]
@@ -112,21 +114,21 @@ mod tests {
     }
 
     #[test]
-    fn erase_packet_matches_verified_acquiring_range() {
+    fn erase_packet_encodes_compact_pending_range() {
         assert_eq!(
-            erase_flash_pages_packet(3826, 100),
-            [0x03, 0x02, 0x0e, 0xf2, 0x00, 0x64]
+            erase_flash_pages_packet(HOST_PENDING_PAGE, 100),
+            [0x03, 0x02, 0x01, 0x2c, 0x00, 0x64]
         );
     }
 
     #[test]
-    fn write_page_packet_has_verified_footer() {
+    fn write_page_packet_has_compact_layout_footer() {
         let data = [0x5a; 256];
-        let packet = write_flash_page_packet(3926, &data);
+        let packet = write_flash_page_packet(HOST_IP_BG_PAGE.into(), &data);
         assert_eq!(packet.len(), 390);
         assert_eq!(&packet[0..6], &[0x04, 0x00, 0x5a, 0x5a, 0x5a, 0x5a]);
         assert_eq!(&packet[378..384], &[0x04, 0x3f, 0x5a, 0x5a, 0x5a, 0x5a]);
-        assert_eq!(&packet[384..390], &[0x03, 0x03, 0x00, 0x0f, 0x56, 0x01]);
+        assert_eq!(&packet[384..390], &[0x03, 0x03, 0x00, 0x01, 0xf4, 0x01]);
     }
 
     #[test]
