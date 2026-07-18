@@ -15,6 +15,13 @@ pub struct RunOptions {
     pub interface: Option<String>,
     pub dhcp_fail_delay: Duration,
     pub debug: bool,
+    pub show: DisplayMode,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DisplayMode {
+    Text,
+    Qr { template: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -64,9 +71,22 @@ impl RunOptions {
         if self.debug {
             out.push("--debug".to_string());
         }
+        match &self.show {
+            DisplayMode::Text => {}
+            DisplayMode::Qr { template } if template == DEFAULT_QR_TEMPLATE => {
+                out.push("--show".to_string());
+                out.push("qr".to_string());
+            }
+            DisplayMode::Qr { template } => {
+                out.push("--show".to_string());
+                out.push(format!("qr:{template}"));
+            }
+        }
         out
     }
 }
+
+pub const DEFAULT_QR_TEMPLATE: &str = "http://{ip}/";
 
 fn reject_extra<I>(command: &str, mut args: I) -> Result<(), CliError>
 where
@@ -88,6 +108,7 @@ where
         interface: None,
         dhcp_fail_delay: Duration::from_secs(45),
         debug: false,
+        show: DisplayMode::Text,
     };
 
     while let Some(arg) = args.next() {
@@ -119,6 +140,12 @@ where
             }
             "--debug" => {
                 options.debug = true;
+            }
+            "--show" => {
+                let value = args
+                    .next()
+                    .ok_or_else(|| CliError("--show requires a value".to_string()))?;
+                options.show = parse_display_mode(&value)?;
             }
             other => return Err(CliError(format!("unknown option {other}"))),
         }
@@ -160,8 +187,70 @@ mod tests {
                 interface: None,
                 dhcp_fail_delay: Duration::from_secs(45),
                 debug: false,
+                show: DisplayMode::Text,
             })
         );
+    }
+
+    #[test]
+    fn show_defaults_to_text_mode() {
+        let command = parse_args(["run"]).unwrap();
+        let Command::Run(options) = command else {
+            panic!("expected run command");
+        };
+
+        assert_eq!(options.show, DisplayMode::Text);
+    }
+
+    #[test]
+    fn show_qr_uses_default_template() {
+        let command = parse_args(["run", "--show", "qr"]).unwrap();
+        let Command::Run(options) = command else {
+            panic!("expected run command");
+        };
+
+        assert_eq!(
+            options.show,
+            DisplayMode::Qr {
+                template: "http://{ip}/".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn show_qr_template_is_embedded_in_service_args() {
+        let command = parse_args(["install", "--show", "qr:http://{ip}:8080/"]).unwrap();
+        let Command::Install(options) = command else {
+            panic!("expected install command");
+        };
+
+        assert_eq!(
+            options.service_args(),
+            [
+                "--dhcp-fail-delay-seconds",
+                "45",
+                "--show",
+                "qr:http://{ip}:8080/",
+            ]
+        );
+    }
+
+    #[test]
+    fn invalid_show_values_are_rejected() {
+        for value in ["text", "qr:", "qr:http://device/", "QR", "ip:http://{ip}/"] {
+            let err = parse_args(["run", "--show", value]).unwrap_err();
+            assert!(
+                err.to_string().contains("--show"),
+                "unexpected error for {value:?}: {err}"
+            );
+        }
+    }
+
+    #[test]
+    fn show_qr_rejects_template_that_is_too_long_for_screen() {
+        let value = format!("qr:http://{{ip}}:8080/{}", "a".repeat(80));
+        let err = parse_args(["run", "--show", &value]).unwrap_err();
+        assert!(err.to_string().contains("too long"));
     }
 
     #[test]
@@ -181,6 +270,7 @@ mod tests {
         assert_eq!(options.interface.as_deref(), Some("eth0"));
         assert_eq!(options.dhcp_fail_delay, Duration::from_secs(90));
         assert!(!options.debug);
+        assert_eq!(options.show, DisplayMode::Text);
         assert_eq!(
             options.service_args(),
             ["--interface", "eth0", "--dhcp-fail-delay-seconds", "90",]
@@ -264,5 +354,35 @@ mod tests {
             version_string(),
             format!("miniboard-ipd {}", env!("CARGO_PKG_VERSION"))
         );
+    }
+}
+
+fn parse_display_mode(value: &str) -> Result<DisplayMode, CliError> {
+    match value {
+        "ip" => Ok(DisplayMode::Text),
+        "qr" => Ok(DisplayMode::Qr {
+            template: DEFAULT_QR_TEMPLATE.to_string(),
+        }),
+        _ if value.starts_with("qr:") => {
+            let template = &value[3..];
+            if template.is_empty() {
+                return Err(CliError(
+                    "--show qr:<template> requires a non-empty template".to_string(),
+                ));
+            }
+            if !template.contains("{ip}") {
+                return Err(CliError(
+                    "--show qr:<template> must contain {ip}".to_string(),
+                ));
+            }
+            crate::qr_display::validate_template(template)
+                .map_err(|err| CliError(format!("--show {err}")))?;
+            Ok(DisplayMode::Qr {
+                template: template.to_string(),
+            })
+        }
+        _ => Err(CliError(
+            "--show must be ip, qr, or qr:<template>".to_string(),
+        )),
     }
 }

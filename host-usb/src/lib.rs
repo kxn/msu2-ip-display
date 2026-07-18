@@ -6,6 +6,7 @@ pub mod ip_detect;
 pub mod logging;
 pub mod platform;
 pub mod protocol;
+pub mod qr_display;
 pub mod runtime;
 pub mod serial;
 pub mod service_install;

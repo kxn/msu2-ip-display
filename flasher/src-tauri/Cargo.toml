@@ -1,6 +1,6 @@
 [package]
 name = "msu2-flasher"
-version = "0.1.9"
+version = "0.1.10"
 description = "Desktop flasher for fixed MSU2 screen assets"
 authors = ["OpenAI"]
 edition = "2021"

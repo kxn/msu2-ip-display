@@ -5,6 +5,7 @@ use crate::protocol::{
     set_color_packet, set_size_packet, set_xy_packet, show_photo_packet, write_lcd_data_packet,
     DHCP_FAILED_PAGE, DIGIT_RESOURCE_PAGE, IP_BACKGROUND_PAGE, PENDING_PAGE,
 };
+use crate::qr_display::{render_qr_rgb565be, QR_WHITE};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WireWrite {
@@ -78,8 +79,17 @@ impl DisplayRenderer {
         writes
     }
 
+    pub fn qr(ip: Ipv4Addr, template: &str) -> Result<Vec<WireWrite>, String> {
+        let bytes = render_qr_rgb565be(template, ip)?;
+        Ok(lcd_region_writes(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, &bytes))
+    }
+
     pub fn keepalive() -> Vec<WireWrite> {
         pixel_writes(KEEPALIVE_X, KEEPALIVE_Y, RGB565_BLACK)
+    }
+
+    pub fn keepalive_white() -> Vec<WireWrite> {
+        pixel_writes(KEEPALIVE_X, KEEPALIVE_Y, QR_WHITE)
     }
 
     pub fn layout_ip(ip: Ipv4Addr) -> IpLayout {
@@ -129,6 +139,27 @@ fn full_screen_page(page: u16) -> Vec<WireWrite> {
         packet(set_size_packet(SCREEN_WIDTH, SCREEN_HEIGHT), false),
         packet(show_photo_packet(page), false),
     ]
+}
+
+fn lcd_region_writes(x: u16, y: u16, width: u16, height: u16, bytes: &[u8]) -> Vec<WireWrite> {
+    assert_eq!(bytes.len(), width as usize * height as usize * 2);
+
+    let mut writes = vec![
+        packet(set_xy_packet(x, y), false),
+        packet(set_size_packet(width, height), false),
+        packet(load_lcd_address_packet(), true),
+    ];
+
+    for chunk in bytes.chunks(256) {
+        let mut page = [0u8; 256];
+        page[..chunk.len()].copy_from_slice(chunk);
+        writes.push(WireWrite {
+            bytes: write_lcd_data_packet(chunk.len() as u16, &page).to_vec(),
+            wait_for_echo: false,
+        });
+    }
+
+    writes
 }
 
 fn packet(bytes: [u8; 6], wait_for_echo: bool) -> WireWrite {
@@ -332,5 +363,27 @@ mod tests {
         }
         assert_eq!(&pixel_bytes[0..2], &[0x00, 0x00]);
         assert!(pixel_bytes[2..].iter().all(|byte| *byte == 0));
+    }
+
+    #[test]
+    fn qr_render_writes_full_screen_lcd_region() {
+        let writes = DisplayRenderer::qr(Ipv4Addr::new(10, 0, 0, 5), "http://{ip}/").unwrap();
+        assert_eq!(writes[0].bytes, set_xy_packet(0, 0).to_vec());
+        assert_eq!(
+            writes[1].bytes,
+            set_size_packet(SCREEN_WIDTH, SCREEN_HEIGHT).to_vec()
+        );
+        assert_eq!(writes[2].bytes, load_lcd_address_packet().to_vec());
+        assert_eq!(writes.len(), 103);
+    }
+
+    #[test]
+    fn qr_keepalive_uses_white_corner_pixel() {
+        let writes = DisplayRenderer::keepalive_white();
+        let lcd_write = writes
+            .iter()
+            .find(|write| write.bytes.len() == 390)
+            .expect("expected lcd data write");
+        assert_eq!(&lcd_write.bytes[2..4], &[0xff, 0xff]);
     }
 }

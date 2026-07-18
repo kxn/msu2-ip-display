@@ -1,7 +1,7 @@
 use std::io;
 use std::time::{Duration, Instant};
 
-use crate::cli::RunOptions;
+use crate::cli::{DisplayMode, RunOptions};
 use crate::daemon::{Daemon, DaemonAction, DaemonEvent, DaemonState};
 use crate::device_scan::TtyDevice;
 use crate::display::{DisplayRenderer, WireWrite};
@@ -27,6 +27,7 @@ pub trait RuntimeIo {
 pub struct Runtime<T> {
     daemon: Daemon,
     io: T,
+    display_mode: DisplayMode,
     connected: bool,
     last_keepalive: Instant,
     last_network_snapshot: Instant,
@@ -35,14 +36,17 @@ pub struct Runtime<T> {
     pending_display_action: Option<DaemonAction>,
     next_connect_at: Option<Instant>,
     connect_backoff: Duration,
+    keepalive_pixel: KeepalivePixel,
 }
 
 impl<T: RuntimeIo> Runtime<T> {
     pub fn new(options: RunOptions, io: T) -> Self {
         let now = io.now();
+        let display_mode = options.show.clone();
         Self {
             daemon: Daemon::new(options),
             io,
+            display_mode,
             connected: false,
             last_keepalive: now,
             last_network_snapshot: now,
@@ -51,6 +55,7 @@ impl<T: RuntimeIo> Runtime<T> {
             pending_display_action: None,
             next_connect_at: None,
             connect_backoff: CONNECT_RETRY_MIN_INTERVAL,
+            keepalive_pixel: KeepalivePixel::Black,
         }
     }
 
@@ -162,7 +167,11 @@ impl<T: RuntimeIo> Runtime<T> {
         }
 
         if now.duration_since(self.last_keepalive) >= KEEPALIVE_INTERVAL {
-            if let Err(err) = self.io.send_writes(&DisplayRenderer::keepalive()) {
+            let writes = match self.keepalive_pixel {
+                KeepalivePixel::Black => DisplayRenderer::keepalive(),
+                KeepalivePixel::White => DisplayRenderer::keepalive_white(),
+            };
+            if let Err(err) = self.io.send_writes(&writes) {
                 return self.handle_runtime_error("keepalive", err, true);
             }
             crate::logging::debug("keepalive ok");
@@ -203,20 +212,41 @@ impl<T: RuntimeIo> Runtime<T> {
             DaemonAction::CloseDevice => {
                 self.io.disconnect();
                 self.connected = false;
+                self.keepalive_pixel = KeepalivePixel::Black;
                 Ok(())
             }
             DaemonAction::ShowPending => {
                 self.io.send_writes(&DisplayRenderer::pending())?;
+                self.keepalive_pixel = KeepalivePixel::Black;
                 self.timeout_counter.record_success();
                 Ok(())
             }
             DaemonAction::ShowDhcpFailed => {
                 self.io.send_writes(&DisplayRenderer::dhcp_failed())?;
+                self.keepalive_pixel = KeepalivePixel::Black;
                 self.timeout_counter.record_success();
                 Ok(())
             }
             DaemonAction::ShowIp(ip) => {
-                self.io.send_writes(&DisplayRenderer::ip(*ip))?;
+                match &self.display_mode {
+                    DisplayMode::Text => {
+                        self.io.send_writes(&DisplayRenderer::ip(*ip))?;
+                        self.keepalive_pixel = KeepalivePixel::Black;
+                    }
+                    DisplayMode::Qr { template } => {
+                        let writes = match DisplayRenderer::qr(*ip, template) {
+                            Ok(writes) => writes,
+                            Err(err) => {
+                                crate::logging::warn(&format!(
+                                    "failed to render QR display for {ip}: {err}"
+                                ));
+                                return Ok(());
+                            }
+                        };
+                        self.io.send_writes(&writes)?;
+                        self.keepalive_pixel = KeepalivePixel::White;
+                    }
+                }
                 self.timeout_counter.record_success();
                 Ok(())
             }
@@ -324,6 +354,12 @@ impl<T: RuntimeIo> Runtime<T> {
 enum DisplayActionLog {
     StateChange,
     Refresh,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum KeepalivePixel {
+    Black,
+    White,
 }
 
 fn log_display_action(action: &DaemonAction, mode: DisplayActionLog) {
@@ -482,7 +518,10 @@ mod tests {
 
     use crate::display::DisplayRenderer;
     use crate::ip_detect::{AddressCandidate, Route};
-    use crate::protocol::{show_photo_packet, IP_BACKGROUND_PAGE};
+    use crate::protocol::{
+        load_lcd_address_packet, set_size_packet, set_xy_packet, show_photo_packet,
+        IP_BACKGROUND_PAGE, SCREEN_HEIGHT, SCREEN_WIDTH,
+    };
 
     #[derive(Default)]
     struct FakeIo {
@@ -528,6 +567,10 @@ mod tests {
                 "pending"
             } else if writes == DisplayRenderer::dhcp_failed() {
                 "dhcp_failed"
+            } else if is_qr_writes(writes) {
+                "qr"
+            } else if writes == DisplayRenderer::keepalive_white() {
+                "keepalive_white"
             } else if writes
                 .first()
                 .is_some_and(|write| write.bytes == show_photo_packet(IP_BACKGROUND_PAGE))
@@ -549,11 +592,19 @@ mod tests {
         }
     }
 
+    fn is_qr_writes(writes: &[WireWrite]) -> bool {
+        writes.len() == 103
+            && writes[0].bytes == set_xy_packet(0, 0).to_vec()
+            && writes[1].bytes == set_size_packet(SCREEN_WIDTH, SCREEN_HEIGHT).to_vec()
+            && writes[2].bytes == load_lcd_address_packet().to_vec()
+    }
+
     fn options() -> RunOptions {
         RunOptions {
             interface: None,
             dhcp_fail_delay: Duration::from_secs(45),
             debug: false,
+            show: DisplayMode::Text,
         }
     }
 
@@ -616,6 +667,54 @@ mod tests {
                 "sleep:500",
             ]
         );
+    }
+
+    #[test]
+    fn qr_mode_renders_qr_instead_of_text_ip() {
+        let start = Instant::now();
+        let mut options = options();
+        options.show = DisplayMode::Qr {
+            template: "http://{ip}/".to_string(),
+        };
+        let io = FakeIo {
+            now: Cell::new(Some(start)),
+            devices: vec![target_device()],
+            snapshot_results: VecDeque::from([Ok(Some(ipv4_snapshot([10, 0, 0, 5])))]),
+            ..FakeIo::default()
+        };
+        let mut runtime = Runtime::new(options, io);
+
+        runtime.tick().unwrap();
+
+        assert!(runtime.io.events.iter().any(|event| event == "writes:qr"));
+        assert!(!runtime.io.events.iter().any(|event| event == "writes:ip"));
+    }
+
+    #[test]
+    fn qr_mode_keepalive_uses_white_pixel() {
+        let start = Instant::now();
+        let mut options = options();
+        options.show = DisplayMode::Qr {
+            template: "http://{ip}/".to_string(),
+        };
+        let snapshot = ipv4_snapshot([10, 0, 0, 5]);
+        let io = FakeIo {
+            now: Cell::new(Some(start)),
+            devices: vec![target_device()],
+            snapshot_results: VecDeque::from([Ok(Some(snapshot.clone())), Ok(Some(snapshot))]),
+            ..FakeIo::default()
+        };
+        let mut runtime = Runtime::new(options, io);
+
+        runtime.tick().unwrap();
+        runtime.io.set_now(start + Duration::from_millis(800));
+        runtime.tick().unwrap();
+
+        assert!(runtime
+            .io
+            .events
+            .iter()
+            .any(|event| event == "writes:keepalive_white"));
     }
 
     #[test]
