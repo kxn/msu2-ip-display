@@ -5,9 +5,21 @@
 `CI` runs on pushes to `master`, pull requests, and manual dispatch. It builds and tests:
 
 - `miniboard-ipd` Linux host artifacts for `linux-amd64`, `linux-arm64`, and `linux-arm32`.
-- MSU2 flasher artifacts for Windows, Linux, macOS x64, and macOS arm64.
+- MSU2 flasher portable artifacts:
+  - `MSU2.Flasher-windows-x64.exe`
+  - `MSU2.Flasher-linux-x64`
+  - macOS x64 and arm64 `.dmg` images
 
 `Release` runs on tags matching `v*` or manual dispatch with an existing tag. It builds the same artifacts and uploads them to the matching GitHub Release.
+
+The flasher release intentionally does not publish Windows installers, Linux distro packages, or AppImage bundles. Windows and Linux releases are one portable executable per platform. On Linux, make the downloaded binary executable before running it:
+
+```sh
+chmod +x ./MSU2.Flasher-linux-x64
+./MSU2.Flasher-linux-x64
+```
+
+On Windows, run `MSU2.Flasher-windows-x64.exe` directly. The portable Windows executable still requires the Microsoft WebView2 Runtime to exist on the system.
 
 ## Host Installer
 

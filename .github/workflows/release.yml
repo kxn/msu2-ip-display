@@ -71,18 +71,20 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: windows
+          - name: windows-x64
             runner: windows-latest
-            args: ""
-          - name: linux
+            kind: portable
+          - name: linux-x64
             runner: ubuntu-22.04
-            args: ""
+            kind: portable
           - name: macos-x64
             runner: macos-latest
-            args: --target x86_64-apple-darwin
+            kind: dmg
+            args: --target x86_64-apple-darwin --bundles dmg
           - name: macos-arm64
             runner: macos-latest
-            args: --target aarch64-apple-darwin
+            kind: dmg
+            args: --target aarch64-apple-darwin --bundles dmg
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -114,7 +116,42 @@ jobs:
         working-directory: flasher/src-tauri
         run: cargo test
 
-      - name: Build Tauri bundle
+      - name: Build frontend
+        if: matrix.kind == 'portable'
+        working-directory: flasher
+        run: npm run build
+
+      - name: Build portable executable
+        if: matrix.kind == 'portable'
+        working-directory: flasher/src-tauri
+        run: cargo build --release
+
+      - name: Package Windows portable executable
+        if: matrix.name == 'windows-x64'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path flasher-portable
+          Copy-Item -LiteralPath flasher/src-tauri/target/release/msu2-flasher.exe -Destination flasher-portable/MSU2.Flasher-windows-x64.exe
+
+      - name: Package Linux portable executable
+        if: matrix.name == 'linux-x64'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p flasher-portable
+          cp flasher/src-tauri/target/release/msu2-flasher flasher-portable/MSU2.Flasher-linux-x64
+          chmod 0755 flasher-portable/MSU2.Flasher-linux-x64
+
+      - name: Upload flasher portable workflow artifact
+        if: matrix.kind == 'portable'
+        uses: actions/upload-artifact@v4
+        with:
+          name: msu2-flasher-${{ matrix.name }}-portable
+          path: flasher-portable/*
+          if-no-files-found: error
+
+      - name: Build macOS DMG
+        if: matrix.kind == 'dmg'
         uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -153,24 +190,15 @@ jobs:
 
           gh api "repos/$GH_REPO/releases/tags/$TAG" --jq '.assets[] | [.id, .name] | @tsv' |
             while IFS=$'\t' read -r asset_id asset_name; do
-              case "$asset_name" in
-                *.tar.gz|*.tar.gz.sha256|*.AppImage|*.deb|*.rpm|*.dmg|*.exe|*.msi)
-                  ;;
-                *)
-                  gh api -X DELETE "repos/$GH_REPO/releases/assets/$asset_id"
-                  ;;
-              esac
+              gh api -X DELETE "repos/$GH_REPO/releases/assets/$asset_id"
             done
 
           find release-assets -type f \
-            \( -name '*.tar.gz' \
-              -o -name '*.tar.gz.sha256' \
-              -o -name '*.AppImage' \
-              -o -name '*.deb' \
-              -o -name '*.rpm' \
+            \( -name 'miniboard-ipd-*.tar.gz' \
+              -o -name 'miniboard-ipd-*.tar.gz.sha256' \
               -o -name '*.dmg' \
-              -o -name '*.exe' \
-              -o -name '*.msi' \) \
+              -o -name 'MSU2.Flasher-windows-x64.exe' \
+              -o -name 'MSU2.Flasher-linux-x64' \) \
             -print0 | while IFS= read -r -d '' file; do
             gh release upload "$TAG" "$file" --clobber
           done

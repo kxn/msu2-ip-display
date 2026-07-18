@@ -101,18 +101,20 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: windows
+          - name: windows-x64
             runner: windows-latest
-            args: ""
-          - name: linux
+            kind: portable
+          - name: linux-x64
             runner: ubuntu-22.04
-            args: ""
+            kind: portable
           - name: macos-x64
             runner: macos-latest
-            args: --target x86_64-apple-darwin
+            kind: dmg
+            args: --target x86_64-apple-darwin --bundles dmg
           - name: macos-arm64
             runner: macos-latest
-            args: --target aarch64-apple-darwin
+            kind: dmg
+            args: --target aarch64-apple-darwin --bundles dmg
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -139,6 +141,7 @@ jobs:
         run: npm ci
 
       - name: Build frontend
+        if: matrix.kind == 'portable'
         working-directory: flasher
         run: npm run build
 
@@ -146,7 +149,38 @@ jobs:
         working-directory: flasher/src-tauri
         run: cargo test
 
-      - name: Build Tauri bundle
+      - name: Build portable executable
+        if: matrix.kind == 'portable'
+        working-directory: flasher/src-tauri
+        run: cargo build --release
+
+      - name: Package Windows portable executable
+        if: matrix.name == 'windows-x64'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path flasher-portable
+          Copy-Item -LiteralPath flasher/src-tauri/target/release/msu2-flasher.exe -Destination flasher-portable/MSU2.Flasher-windows-x64.exe
+
+      - name: Package Linux portable executable
+        if: matrix.name == 'linux-x64'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p flasher-portable
+          cp flasher/src-tauri/target/release/msu2-flasher flasher-portable/MSU2.Flasher-linux-x64
+          chmod 0755 flasher-portable/MSU2.Flasher-linux-x64
+
+      - name: Upload flasher portable artifact
+        if: matrix.kind == 'portable'
+        uses: actions/upload-artifact@v4
+        with:
+          name: msu2-flasher-${{ matrix.name }}-portable
+          path: flasher-portable/*
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Build macOS DMG
+        if: matrix.kind == 'dmg'
         uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
