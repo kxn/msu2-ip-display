@@ -1,8 +1,8 @@
 # MSU2 IP Display
 
-把一块 MSU2 MINI USB 小屏变成无头 Linux 设备的 IP 显示器。
+有时候我们会遇到这种情况，把一个无头设备例如一个网络盒子拿去现场部署，因为不知道对方网络情况，或者盒子是批量刷的，不方便预先设置好只能 DHCP，但是在对方网络里面也不一定有方便的手段来找到 DHCP 出来的 IP，因此我就做了这个项目，Linux 盒子里面装上配套程序，在现场接好网线或者连好 wifi 以后，把一个带屏幕的小板插在 USB 口上，就可以直接显示 IP 或者二维码。
 
-设备部署到现场后，经常是 DHCP 自动拿地址，但旁边没有显示器。这个项目提供两件配套工具：先用桌面刷写器把小屏刷成适合显示 IP 的资源布局，再在 Linux 设备上安装 `miniboard-ipd`，插上小屏后自动显示当前 IPv4，或者显示可扫码打开的二维码。
+效果大概如下所示
 
 <p align="center">
   <img src="docs/images/ip-text-display.jpg" alt="MSU2 MINI 显示文字 IPv4" width="32%">
@@ -12,15 +12,15 @@
 
 ## 准备硬件
 
-需要一块 MSU2 MINI USB 小屏。购买地址：
+硬件我选择了能找到的最便宜的带屏幕小板，墨砺工作室的 MSU2 Mini，组装好的 11.9 元，散件 10.9 元，但是有 6 块钱运费。
 
 <https://item.taobao.com/item.htm?id=841679900812>
-
-购买时选已经组装好的版本，拿到后直接用 USB 连接电脑或 Linux 设备即可。
 
 ## 快速开始
 
 ### 1. 刷写小屏资源
+
+小屏幕需要预先处理一下，把常用显示图给刷进去（其实理论上不刷也行，但是就有些状态看着很奇怪）。因此先要刷一下，这个小板子在 win10/11 下是免驱的，直接插上就行。
 
 从 [Latest Release](https://github.com/kxn/msu2-ip-display/releases/latest) 下载 `MSU2 Flasher`：
 
@@ -31,7 +31,7 @@
 | macOS Intel | `MSU2.Flasher_<版本>_x64.dmg` |
 | macOS Apple Silicon | `MSU2.Flasher_<版本>_aarch64.dmg` |
 
-打开刷写器，插入 MSU2 MINI，等待应用识别设备后点击 `写入`。刷写完成后，小屏就具备待机动画、获取 IP、DHCP 失败、文字 IP 和二维码显示需要的资源。
+打开刷写器，插入 MSU2 MINI，等待应用识别设备后点击 `写入`。刷写完成后就可以拔下来了。
 
 Linux 版 flasher 下载后需要加执行权限：
 
@@ -42,7 +42,7 @@ chmod +x ./MSU2.Flasher-linux-x64
 
 ### 2. 在 Linux 设备上安装 IP 显示服务
 
-默认安装后显示文字 IPv4：
+默认安装后显示文字 IPv4 地址， 因为我老花眼了，所以故意把 IP 分了两行显示让字大一点：
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/kxn/msu2-ip-display/master/scripts/install-miniboard-ipd.sh | sudo sh
@@ -52,13 +52,13 @@ curl -fsSL https://raw.githubusercontent.com/kxn/msu2-ip-display/master/scripts/
 
 ## 显示二维码
 
-二维码模式适合设备有 Web 管理页面的场景。默认二维码内容是 `http://{ip}/`：
+不想还费劲输入的，可以让显示的时候不显示文字 IP 而是显示一个二维码，这样就可以用手机扫码来快速完成应用配置。默认 --show qr 会显示一个 'http://{ip}' 的二维码
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/kxn/msu2-ip-display/master/scripts/install-miniboard-ipd.sh | sudo sh -s -- --show qr
 ```
 
-如果页面在固定端口上，把 URL 模板写在 `--show` 后面：
+如果希望直接一步到位给出完整地址，可以把 URL 模板写在 `--show qr:` 后面：
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/kxn/msu2-ip-display/master/scripts/install-miniboard-ipd.sh | sudo sh -s -- --show 'qr:http://{ip}:8080/'
@@ -68,7 +68,7 @@ curl -fsSL https://raw.githubusercontent.com/kxn/msu2-ip-display/master/scripts/
 
 ## 固定网口
 
-默认选择带默认路由的 IPv4。现场有多张网卡，或者明确只想显示某个接口时，可以在安装时指定接口：
+默认选择带默认路由的 IPv4。如果盒子有多个网卡，希望只显示某个接口时，可以在安装时指定接口：
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/kxn/msu2-ip-display/master/scripts/install-miniboard-ipd.sh | sudo sh -s -- --interface eth0
