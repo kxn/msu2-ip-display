@@ -252,7 +252,7 @@ allow_link_local=true
 
 - IP 已显示时，只更新一个不影响观感的小像素区域。
 - 状态图显示时，可以重发当前 page 或同样更新小区域。
-- 周期先按 `1s` 设计，后续根据实机观察调整。
+- 周期先按 `800ms` 实现，和 flasher 的已验证 keepalive 行为保持一致；后续根据实机观察调整。
 
 ## 服务安装
 
@@ -294,6 +294,6 @@ v1 可识别但不自动完整安装的 init：
 1. DHCP 来源判断优先使用 rtnetlink 动态地址信息；如果实测覆盖不够，再补充解析常见 lease 文件。
 2. BusyBox init 自动安装只能 best-effort，不同极简系统 rc 目录差异较大。
 3. runit/s6/dinit v1 只输出模板，不做完整自动安装。
-4. keepalive 周期先按 `1s` 实现，后续根据实机长期观察调整。
+4. keepalive 周期先按 `800ms` 实现，后续根据实机长期观察调整。
 5. release 产物优先 `x86_64-unknown-linux-musl` 和 `aarch64-unknown-linux-musl`，必要时补 `armv7-unknown-linux-musleabihf` 或实际可用的 armv7 musl target。
 6. 默认安装路径建议 `/usr/local/bin/miniboard-ipd`，除非目标系统没有该目录。

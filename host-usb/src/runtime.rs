@@ -8,6 +8,8 @@ use crate::display::{DisplayRenderer, WireWrite};
 use crate::ip_detect::NetworkSnapshot;
 use crate::serial::{classify_io_error, SerialErrorKind, TimeoutCounter};
 
+const KEEPALIVE_INTERVAL: Duration = Duration::from_millis(800);
+
 pub trait RuntimeIo {
     fn scan_devices(&mut self) -> io::Result<Vec<TtyDevice>>;
     fn connect(&mut self, device: &TtyDevice) -> io::Result<()>;
@@ -92,7 +94,7 @@ impl<T: RuntimeIo> Runtime<T> {
             }
         }
 
-        if now.duration_since(self.last_keepalive) >= Duration::from_secs(10) {
+        if now.duration_since(self.last_keepalive) >= KEEPALIVE_INTERVAL {
             if let Err(err) = self.io.send_writes(&DisplayRenderer::keepalive()) {
                 return self.handle_runtime_error("keepalive", err, true);
             }
@@ -403,6 +405,33 @@ mod tests {
                 "writes:ip",
                 "sleep:500",
             ]
+        );
+    }
+
+    #[test]
+    fn keepalive_is_sent_within_one_second_after_displaying_ip() {
+        let start = Instant::now();
+        let snapshot = ipv4_snapshot([192, 168, 1, 20]);
+        let io = FakeIo {
+            now: Cell::new(Some(start)),
+            devices: vec![target_device()],
+            snapshot_results: VecDeque::from([Ok(snapshot.clone()), Ok(snapshot)]),
+            ..FakeIo::default()
+        };
+        let mut runtime = Runtime::new(options(), io);
+
+        runtime.tick().unwrap();
+        runtime.io.set_now(start + Duration::from_millis(800));
+        runtime.tick().unwrap();
+
+        assert_eq!(
+            runtime
+                .io
+                .events
+                .iter()
+                .filter(|event| event.as_str() == "writes:other")
+                .count(),
+            1
         );
     }
 

@@ -41,6 +41,7 @@ const ROW_GAP: u16 = 8;
 const SCREEN_WIDTH: u16 = 160;
 const SCREEN_HEIGHT: u16 = 80;
 const RGB565_GREEN: u16 = 0x07e0;
+const RGB565_BLACK: u16 = 0x0000;
 const KEEPALIVE_X: u16 = SCREEN_WIDTH - 1;
 const KEEPALIVE_Y: u16 = SCREEN_HEIGHT - 1;
 
@@ -84,7 +85,7 @@ impl DisplayRenderer {
     }
 
     pub fn keepalive() -> Vec<WireWrite> {
-        pixel_writes(KEEPALIVE_X, KEEPALIVE_Y, RGB565_GREEN)
+        pixel_writes(KEEPALIVE_X, KEEPALIVE_Y, RGB565_BLACK)
     }
 
     pub fn layout_ip(ip: Ipv4Addr) -> IpLayout {
@@ -284,7 +285,7 @@ mod tests {
         for chunk in lcd_write.bytes[..384].chunks_exact(6) {
             pixel_bytes.extend_from_slice(&chunk[2..6]);
         }
-        assert_eq!(&pixel_bytes[0..2], &RGB565_GREEN.to_be_bytes());
+        assert_eq!(&pixel_bytes[0..2], &[0x00, 0x00]);
         assert!(pixel_bytes[2..].iter().all(|byte| *byte == 0));
     }
 }
