@@ -206,7 +206,9 @@ pub fn apply_install(_request: &InstallRequest, _ops: &mut dyn InstallOps) -> st
     let request = _request;
     let ops = _ops;
     let rendered = render_service(request.init, &request.spec);
-    ops.copy_file(&request.source_binary_path, &request.spec.binary_path, true)?;
+    if request.source_binary_path != Path::new(&request.spec.binary_path) {
+        ops.copy_file(&request.source_binary_path, &request.spec.binary_path, true)?;
+    }
     ops.write_file(
         &rendered.path,
         &rendered.contents,
@@ -523,6 +525,17 @@ mod command_tests {
         }
     }
 
+    fn installed_request(kind: InitKind) -> InstallRequest {
+        InstallRequest {
+            source_binary_path: PathBuf::from("/usr/local/bin/miniboard-ipd"),
+            spec: InstallSpec {
+                binary_path: "/usr/local/bin/miniboard-ipd".to_string(),
+                service_args: vec!["--interface".to_string(), "eth0".to_string()],
+            },
+            init: kind,
+        }
+    }
+
     #[test]
     fn systemd_install_commands_reload_enable_and_start() {
         assert_eq!(
@@ -606,6 +619,24 @@ mod command_tests {
         );
         assert_eq!(
             ops.events[1],
+            "write:/etc/systemd/system/miniboard-ipd.service:false:true"
+        );
+        assert!(ops
+            .events
+            .contains(&"run:systemctl daemon-reload".to_string()));
+        assert!(ops
+            .events
+            .contains(&"run:systemctl enable --now miniboard-ipd.service".to_string()));
+    }
+
+    #[test]
+    fn apply_install_skips_binary_copy_when_already_running_from_installed_path() {
+        let mut ops = RecordingOps::default();
+        apply_install(&installed_request(InitKind::Systemd), &mut ops).unwrap();
+
+        assert!(!ops.events.iter().any(|event| event.starts_with("copy:")));
+        assert_eq!(
+            ops.events[0],
             "write:/etc/systemd/system/miniboard-ipd.service:false:true"
         );
         assert!(ops
