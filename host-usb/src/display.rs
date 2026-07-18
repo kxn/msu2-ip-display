@@ -47,17 +47,11 @@ const KEEPALIVE_Y: u16 = SCREEN_HEIGHT - 1;
 
 impl DisplayRenderer {
     pub fn pending() -> Vec<WireWrite> {
-        vec![WireWrite {
-            bytes: show_photo_packet(PENDING_PAGE).to_vec(),
-            wait_for_echo: false,
-        }]
+        full_screen_page(PENDING_PAGE)
     }
 
     pub fn dhcp_failed() -> Vec<WireWrite> {
-        vec![WireWrite {
-            bytes: show_photo_packet(DHCP_FAILED_PAGE).to_vec(),
-            wait_for_echo: false,
-        }]
+        full_screen_page(DHCP_FAILED_PAGE)
     }
 
     pub fn ip(ip: Ipv4Addr) -> Vec<WireWrite> {
@@ -129,6 +123,14 @@ impl DisplayRenderer {
     }
 }
 
+fn full_screen_page(page: u16) -> Vec<WireWrite> {
+    vec![
+        packet(set_xy_packet(0, 0), false),
+        packet(set_size_packet(SCREEN_WIDTH, SCREEN_HEIGHT), false),
+        packet(show_photo_packet(page), false),
+    ]
+}
+
 fn packet(bytes: [u8; 6], wait_for_echo: bool) -> WireWrite {
     WireWrite {
         bytes: bytes.to_vec(),
@@ -190,11 +192,35 @@ mod tests {
     #[test]
     fn page_state_commands_show_expected_pages() {
         assert_eq!(
-            DisplayRenderer::pending()[0].bytes,
+            DisplayRenderer::pending().last().unwrap().bytes,
             show_photo_packet(PENDING_PAGE).to_vec()
         );
         assert_eq!(
-            DisplayRenderer::dhcp_failed()[0].bytes,
+            DisplayRenderer::dhcp_failed().last().unwrap().bytes,
+            show_photo_packet(DHCP_FAILED_PAGE).to_vec()
+        );
+    }
+
+    #[test]
+    fn page_state_commands_set_fullscreen_window_before_showing_page() {
+        let pending = DisplayRenderer::pending();
+        assert_eq!(pending.len(), 3);
+        assert_eq!(pending[0].bytes, set_xy_packet(0, 0).to_vec());
+        assert_eq!(
+            pending[1].bytes,
+            set_size_packet(SCREEN_WIDTH, SCREEN_HEIGHT).to_vec()
+        );
+        assert_eq!(pending[2].bytes, show_photo_packet(PENDING_PAGE).to_vec());
+
+        let dhcp_failed = DisplayRenderer::dhcp_failed();
+        assert_eq!(dhcp_failed.len(), 3);
+        assert_eq!(dhcp_failed[0].bytes, set_xy_packet(0, 0).to_vec());
+        assert_eq!(
+            dhcp_failed[1].bytes,
+            set_size_packet(SCREEN_WIDTH, SCREEN_HEIGHT).to_vec()
+        );
+        assert_eq!(
+            dhcp_failed[2].bytes,
             show_photo_packet(DHCP_FAILED_PAGE).to_vec()
         );
     }
