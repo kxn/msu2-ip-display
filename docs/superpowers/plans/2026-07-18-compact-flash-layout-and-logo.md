@@ -197,7 +197,7 @@ fn validates_variable_sized_assets() {
 运行：
 
 ```powershell
-cargo test assets::tests::compact_layout_constants_are_stable assets::tests::flash_asset_end_page_uses_page_count assets::tests::validates_variable_sized_assets
+cargo test --manifest-path flasher/src-tauri/Cargo.toml assets::tests::compact_layout_constants_are_stable assets::tests::flash_asset_end_page_uses_page_count assets::tests::validates_variable_sized_assets
 ```
 
 期望：失败，因为新常量和 `FlashAsset` 还不存在。
@@ -286,7 +286,7 @@ pub fn validate_image(label: &'static str, bytes: &[u8]) -> Result<(), AssetErro
 运行：
 
 ```powershell
-cargo test assets::tests -- --nocapture
+cargo test --manifest-path flasher/src-tauri/Cargo.toml assets::tests -- --nocapture
 ```
 
 期望：新资源模型测试通过；旧固定刷写计划测试可能要到任务 3 才全部修完。
@@ -593,7 +593,7 @@ fn resource_directory_points_offline_animation_to_two_frames() {
 运行：
 
 ```powershell
-cargo test assets::tests -- --nocapture
+cargo test --manifest-path flasher/src-tauri/Cargo.toml assets::tests -- --nocapture
 ```
 
 期望：失败，因为 `EmbeddedAssets` 仍在嵌入 `offline_animation`，`fixed_flash_plan` 仍输出 39 个固定大小资源。
@@ -712,7 +712,7 @@ git rm flasher\src-tauri\assets\offline_animation.rgb565be
 运行：
 
 ```powershell
-cargo test assets::tests -- --nocapture
+cargo test --manifest-path flasher/src-tauri/Cargo.toml assets::tests -- --nocapture
 ```
 
 期望：全部 `assets` 测试通过。
@@ -783,7 +783,7 @@ fn writes_variable_sized_assets() {
 运行：
 
 ```powershell
-cargo test flasher::tests::writes_variable_sized_assets -- --nocapture
+cargo test --manifest-path flasher/src-tauri/Cargo.toml flasher::tests::writes_variable_sized_assets -- --nocapture
 ```
 
 期望：失败，因为 `flash_images_internal` 仍按 `PAGES_PER_IMAGE` 擦写。
@@ -858,7 +858,7 @@ for page in [OFFLINE_VISIBLE_PAGE, HOST_PENDING_PAGE, HOST_IP_BG_PAGE, OFFLINE_V
 运行：
 
 ```powershell
-cargo test flasher::tests -- --nocapture
+cargo test --manifest-path flasher/src-tauri/Cargo.toml flasher::tests -- --nocapture
 ```
 
 期望：全部 flasher 测试通过。
