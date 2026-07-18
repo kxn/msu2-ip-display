@@ -1,9 +1,24 @@
 use thiserror::Error;
 
-pub const IMAGE_BYTES: usize = 25_600;
+pub const PAGE_BYTES: usize = 256;
+pub const RGB_IMAGE_BYTES: usize = 25_600;
+pub const IMAGE_BYTES: usize = RGB_IMAGE_BYTES;
 pub const OFFLINE_FRAME_COUNT: usize = 36;
 pub const OFFLINE_ANIMATION_BYTES: usize = IMAGE_BYTES * OFFLINE_FRAME_COUNT;
-pub const PAGES_PER_IMAGE: u16 = 100;
+pub const RGB_IMAGE_PAGES: u16 = 100;
+pub const PAGES_PER_IMAGE: u16 = RGB_IMAGE_PAGES;
+pub const MONO_LOGO_PAGES: u16 = 6;
+pub const DIRECTORY_PAGES: u16 = 1;
+pub const OFFLINE_VISIBLE_PAGE: u16 = 0;
+pub const OFFLINE_BLANK_PAGE: u16 = 100;
+pub const OFFLINE_STATIC_PAGE: u16 = 200;
+pub const HOST_PENDING_PAGE: u16 = 300;
+pub const HOST_DHCP_FAILED_PAGE: u16 = 400;
+pub const HOST_IP_BG_PAGE: u16 = 500;
+pub const STARTUP_LOGO_PAGE: u16 = 3820;
+pub const DIGIT_RESOURCE_PAGE: u16 = 4026;
+pub const RESOURCE_DIRECTORY_PAGE: u16 = 4094;
+pub const PANEL_CONFIG_PAGE: u16 = 4095;
 pub const DHCP_FAILED_PAGE: u16 = 3726;
 pub const ACQUIRING_PAGE: u16 = 3826;
 pub const IP_BG_PAGE: u16 = 3926;
@@ -28,17 +43,24 @@ pub enum AssetError {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub struct FlashImage<'a> {
+pub struct FlashAsset<'a> {
     pub label: &'static str,
     pub start_page: u16,
+    pub page_count: u16,
     pub bytes: &'a [u8],
 }
 
-impl<'a> FlashImage<'a> {
+impl<'a> FlashAsset<'a> {
+    pub fn expected_len(&self) -> usize {
+        self.page_count as usize * PAGE_BYTES
+    }
+
     pub fn end_page(&self) -> u16 {
-        self.start_page + PAGES_PER_IMAGE - 1
+        self.start_page + self.page_count - 1
     }
 }
+
+pub type FlashImage<'a> = FlashAsset<'a>;
 
 #[derive(Debug, Clone, Copy)]
 pub struct EmbeddedAssets {
@@ -65,16 +87,26 @@ pub fn embedded_assets() -> EmbeddedAssets {
     }
 }
 
-pub fn validate_image(label: &'static str, bytes: &[u8]) -> Result<(), AssetError> {
-    if bytes.len() != IMAGE_BYTES {
+pub fn validate_asset(asset: &FlashAsset<'_>) -> Result<(), AssetError> {
+    let expected = asset.expected_len();
+    if asset.bytes.len() != expected {
         return Err(AssetError::WrongSize {
-            label,
-            actual: bytes.len(),
-            expected: IMAGE_BYTES,
+            label: asset.label,
+            actual: asset.bytes.len(),
+            expected,
         });
     }
 
     Ok(())
+}
+
+pub fn validate_image(label: &'static str, bytes: &[u8]) -> Result<(), AssetError> {
+    validate_asset(&FlashAsset {
+        label,
+        start_page: 0,
+        page_count: RGB_IMAGE_PAGES,
+        bytes,
+    })
 }
 
 pub fn fixed_flash_plan<'a>(assets: &'a EmbeddedAssets) -> Vec<FlashImage<'a>> {
@@ -84,6 +116,7 @@ pub fn fixed_flash_plan<'a>(assets: &'a EmbeddedAssets) -> Vec<FlashImage<'a>> {
         plan.push(FlashImage {
             label: "offline",
             start_page: (frame as u16) * PAGES_PER_IMAGE,
+            page_count: RGB_IMAGE_PAGES,
             bytes: assets.offline_frame(frame),
         });
     }
@@ -91,18 +124,21 @@ pub fn fixed_flash_plan<'a>(assets: &'a EmbeddedAssets) -> Vec<FlashImage<'a>> {
     plan.push(FlashImage {
         label: "dhcp_failed",
         start_page: DHCP_FAILED_PAGE,
+        page_count: RGB_IMAGE_PAGES,
         bytes: assets.dhcp_failed,
     });
 
     plan.push(FlashImage {
         label: "acquiring",
         start_page: ACQUIRING_PAGE,
+        page_count: RGB_IMAGE_PAGES,
         bytes: assets.acquiring,
     });
 
     plan.push(FlashImage {
         label: "ip_bg",
         start_page: IP_BG_PAGE,
+        page_count: RGB_IMAGE_PAGES,
         bytes: assets.ip_bg,
     });
 
@@ -135,6 +171,63 @@ mod tests {
         assert_eq!(assets.acquiring.len(), IMAGE_BYTES);
         assert_eq!(assets.dhcp_failed.len(), IMAGE_BYTES);
         assert_eq!(assets.ip_bg.len(), IMAGE_BYTES);
+    }
+
+    #[test]
+    fn compact_layout_constants_are_stable() {
+        assert_eq!(OFFLINE_VISIBLE_PAGE, 0);
+        assert_eq!(OFFLINE_BLANK_PAGE, 100);
+        assert_eq!(OFFLINE_STATIC_PAGE, 200);
+        assert_eq!(HOST_PENDING_PAGE, 300);
+        assert_eq!(HOST_DHCP_FAILED_PAGE, 400);
+        assert_eq!(HOST_IP_BG_PAGE, 500);
+        assert_eq!(STARTUP_LOGO_PAGE, 3820);
+        assert_eq!(DIGIT_RESOURCE_PAGE, 4026);
+        assert_eq!(RESOURCE_DIRECTORY_PAGE, 4094);
+        assert_eq!(PANEL_CONFIG_PAGE, 4095);
+    }
+
+    #[test]
+    fn flash_asset_end_page_uses_page_count() {
+        let bytes = [0u8; PAGE_BYTES * 6];
+        let asset = FlashAsset {
+            label: "logo",
+            start_page: STARTUP_LOGO_PAGE,
+            page_count: MONO_LOGO_PAGES,
+            bytes: &bytes,
+        };
+
+        assert_eq!(asset.expected_len(), PAGE_BYTES * 6);
+        assert_eq!(asset.end_page(), 3825);
+    }
+
+    #[test]
+    fn validates_variable_sized_assets() {
+        let rgb = [0u8; RGB_IMAGE_BYTES];
+        let logo = [0u8; PAGE_BYTES * 6];
+        let directory = [0u8; PAGE_BYTES];
+
+        validate_asset(&FlashAsset {
+            label: "rgb",
+            start_page: HOST_PENDING_PAGE,
+            page_count: RGB_IMAGE_PAGES,
+            bytes: &rgb,
+        })
+        .unwrap();
+        validate_asset(&FlashAsset {
+            label: "logo",
+            start_page: STARTUP_LOGO_PAGE,
+            page_count: MONO_LOGO_PAGES,
+            bytes: &logo,
+        })
+        .unwrap();
+        validate_asset(&FlashAsset {
+            label: "directory",
+            start_page: RESOURCE_DIRECTORY_PAGE,
+            page_count: DIRECTORY_PAGES,
+            bytes: &directory,
+        })
+        .unwrap();
     }
 
     #[test]

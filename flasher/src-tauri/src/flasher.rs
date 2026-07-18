@@ -298,6 +298,7 @@ mod tests {
         let flash_image = FlashImage {
             label: "test",
             start_page: 3826,
+            page_count: PAGES_PER_IMAGE,
             bytes: &image,
         };
         let mut port = MockPort::new();
@@ -397,11 +398,13 @@ mod tests {
             FlashImage {
                 label: "good",
                 start_page: 3826,
+                page_count: PAGES_PER_IMAGE,
                 bytes: &good,
             },
             FlashImage {
                 label: "bad",
                 start_page: 3926,
+                page_count: PAGES_PER_IMAGE,
                 bytes: &bad,
             },
         ];
@@ -419,6 +422,7 @@ mod tests {
         let flash_image = FlashImage {
             label: "test",
             start_page: 3826,
+            page_count: PAGES_PER_IMAGE,
             bytes: &image,
         };
         let first_page = flash_image.start_page as u32;
@@ -447,6 +451,7 @@ mod tests {
         let flash_image = FlashImage {
             label: "test",
             start_page: 3826,
+            page_count: PAGES_PER_IMAGE,
             bytes: &image,
         };
         let mut port = MockPort::with_replies(vec![
@@ -468,6 +473,7 @@ mod tests {
         let flash_image = FlashImage {
             label: "test",
             start_page: 3826,
+            page_count: PAGES_PER_IMAGE,
             bytes: &image,
         };
         let mut port = MockPort::with_replies(vec![vec![], vec![], vec![0xde, 0xad]]);
