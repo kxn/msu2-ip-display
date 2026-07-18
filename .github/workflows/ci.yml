@@ -21,6 +21,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Test install script
+        working-directory: ${{ github.workspace }}
+        run: sh scripts/test-install-miniboard-ipd.sh
+
       - name: Install Rust targets
         run: |
           rustup target add \

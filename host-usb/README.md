@@ -14,6 +14,26 @@ miniboard-ipd run --interface eth0
 miniboard-ipd install --interface eth0 --dhcp-fail-delay-seconds 45
 ```
 
+## One-line install
+
+The installer downloads the latest GitHub Release asset matching the current Linux architecture, verifies its SHA-256 checksum, installs `miniboard-ipd` to `/usr/local/bin`, then runs `miniboard-ipd install ...`.
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/kxn/msu2-ip-display/master/scripts/install-miniboard-ipd.sh | sudo sh
+```
+
+Pass daemon options after `sh -s --`; they are embedded into the generated service/init script:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/kxn/msu2-ip-display/master/scripts/install-miniboard-ipd.sh | sudo sh -s -- --interface eth0 --dhcp-fail-delay-seconds 45
+```
+
+Install only the binary without registering a service:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/kxn/msu2-ip-display/master/scripts/install-miniboard-ipd.sh | sudo sh -s -- --no-service
+```
+
 ## Build
 
 ```bash
