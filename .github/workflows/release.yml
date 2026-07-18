@@ -151,6 +151,26 @@ jobs:
             gh release create "$TAG" --title "$TAG" --generate-notes
           fi
 
-          find release-assets -type f -print0 | while IFS= read -r -d '' file; do
+          gh api "repos/$GH_REPO/releases/tags/$TAG" --jq '.assets[] | [.id, .name] | @tsv' |
+            while IFS=$'\t' read -r asset_id asset_name; do
+              case "$asset_name" in
+                *.tar.gz|*.tar.gz.sha256|*.AppImage|*.deb|*.rpm|*.dmg|*.exe|*.msi)
+                  ;;
+                *)
+                  gh api -X DELETE "repos/$GH_REPO/releases/assets/$asset_id"
+                  ;;
+              esac
+            done
+
+          find release-assets -type f \
+            \( -name '*.tar.gz' \
+              -o -name '*.tar.gz.sha256' \
+              -o -name '*.AppImage' \
+              -o -name '*.deb' \
+              -o -name '*.rpm' \
+              -o -name '*.dmg' \
+              -o -name '*.exe' \
+              -o -name '*.msi' \) \
+            -print0 | while IFS= read -r -d '' file; do
             gh release upload "$TAG" "$file" --clobber
           done
