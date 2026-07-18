@@ -94,7 +94,11 @@ pub fn install_commands(kind: InitKind) -> Vec<Vec<String>> {
             vec![
                 "systemctl".into(),
                 "enable".into(),
-                "--now".into(),
+                "miniboard-ipd.service".into(),
+            ],
+            vec![
+                "systemctl".into(),
+                "restart".into(),
                 "miniboard-ipd.service".into(),
             ],
         ],
@@ -105,16 +109,20 @@ pub fn install_commands(kind: InitKind) -> Vec<Vec<String>> {
                 "miniboard-ipd".into(),
                 "default".into(),
             ],
-            vec!["rc-service".into(), "miniboard-ipd".into(), "start".into()],
+            vec![
+                "rc-service".into(),
+                "miniboard-ipd".into(),
+                "restart".into(),
+            ],
         ],
         InitKind::OpenWrtProcd => vec![
             vec!["/etc/init.d/miniboard-ipd".into(), "enable".into()],
-            vec!["/etc/init.d/miniboard-ipd".into(), "start".into()],
+            vec!["/etc/init.d/miniboard-ipd".into(), "restart".into()],
         ],
         InitKind::SysV => vec![vec![
             "service".into(),
             "miniboard-ipd".into(),
-            "start".into(),
+            "restart".into(),
         ]],
         InitKind::SysVUpdateRcD => vec![
             vec![
@@ -122,13 +130,16 @@ pub fn install_commands(kind: InitKind) -> Vec<Vec<String>> {
                 "miniboard-ipd".into(),
                 "defaults".into(),
             ],
-            vec!["service".into(), "miniboard-ipd".into(), "start".into()],
+            vec!["service".into(), "miniboard-ipd".into(), "restart".into()],
         ],
         InitKind::SysVChkconfig => vec![
             vec!["chkconfig".into(), "--add".into(), "miniboard-ipd".into()],
-            vec!["service".into(), "miniboard-ipd".into(), "start".into()],
+            vec!["service".into(), "miniboard-ipd".into(), "restart".into()],
         ],
-        InitKind::BusyBox => vec![vec!["/etc/init.d/S99miniboard-ipd".into(), "start".into()]],
+        InitKind::BusyBox => vec![vec![
+            "/etc/init.d/S99miniboard-ipd".into(),
+            "restart".into(),
+        ]],
         _ => Vec::new(),
     }
 }
@@ -370,8 +381,9 @@ fn render_busybox(spec: &InstallSpec) -> ServiceRender {
     ServiceRender {
         path: "/etc/init.d/S99miniboard-ipd".to_string(),
         contents: format!(
-            "#!/bin/sh\ncase \"$1\" in\n  start) {} & ;;\n  stop) pkill -f \"{} run\" || true ;;\nesac\n",
+            "#!/bin/sh\ncase \"$1\" in\n  start) {} & ;;\n  stop) pkill -f \"{} run\" || true ;;\n  restart) \"$0\" stop; \"$0\" start ;;\n  status) pgrep -af \"{} run\" ;;\n  *) echo \"Usage: $0 {{start|stop|restart|status}}\"; exit 1 ;;\nesac\n",
             command_line(spec),
+            spec.binary_path,
             spec.binary_path
         ),
     }
@@ -472,6 +484,16 @@ mod tests {
             .contents
             .contains("Usage: $0 {start|stop|restart|status}"));
     }
+
+    #[test]
+    fn busybox_script_supports_restart_command() {
+        let render = render_service(InitKind::BusyBox, &spec());
+        assert!(render.contents.contains("  restart)"));
+        assert!(render.contents.contains("\"$0\" stop; \"$0\" start"));
+        assert!(render
+            .contents
+            .contains("Usage: $0 {start|stop|restart|status}"));
+    }
 }
 
 #[cfg(test)]
@@ -537,35 +559,74 @@ mod command_tests {
     }
 
     #[test]
-    fn systemd_install_commands_reload_enable_and_start() {
+    fn systemd_install_commands_reload_enable_and_restart() {
         assert_eq!(
             install_commands(InitKind::Systemd),
             vec![
                 vec!["systemctl", "daemon-reload"],
-                vec!["systemctl", "enable", "--now", "miniboard-ipd.service"],
+                vec!["systemctl", "enable", "miniboard-ipd.service"],
+                vec!["systemctl", "restart", "miniboard-ipd.service"],
             ]
         );
     }
 
     #[test]
-    fn sysv_update_rc_d_install_enables_boot_start_and_starts_service() {
+    fn openrc_install_enables_boot_start_and_restarts_service() {
+        assert_eq!(
+            install_commands(InitKind::OpenRc),
+            vec![
+                vec!["rc-update", "add", "miniboard-ipd", "default"],
+                vec!["rc-service", "miniboard-ipd", "restart"],
+            ]
+        );
+    }
+
+    #[test]
+    fn openwrt_install_enables_boot_start_and_restarts_service() {
+        assert_eq!(
+            install_commands(InitKind::OpenWrtProcd),
+            vec![
+                vec!["/etc/init.d/miniboard-ipd", "enable"],
+                vec!["/etc/init.d/miniboard-ipd", "restart"],
+            ]
+        );
+    }
+
+    #[test]
+    fn sysv_install_restarts_service() {
+        assert_eq!(
+            install_commands(InitKind::SysV),
+            vec![vec!["service", "miniboard-ipd", "restart"]]
+        );
+    }
+
+    #[test]
+    fn sysv_update_rc_d_install_enables_boot_start_and_restarts_service() {
         assert_eq!(
             install_commands(InitKind::SysVUpdateRcD),
             vec![
                 vec!["update-rc.d", "miniboard-ipd", "defaults"],
-                vec!["service", "miniboard-ipd", "start"],
+                vec!["service", "miniboard-ipd", "restart"],
             ]
         );
     }
 
     #[test]
-    fn sysv_chkconfig_install_enables_boot_start_and_starts_service() {
+    fn sysv_chkconfig_install_enables_boot_start_and_restarts_service() {
         assert_eq!(
             install_commands(InitKind::SysVChkconfig),
             vec![
                 vec!["chkconfig", "--add", "miniboard-ipd"],
-                vec!["service", "miniboard-ipd", "start"],
+                vec!["service", "miniboard-ipd", "restart"],
             ]
+        );
+    }
+
+    #[test]
+    fn busybox_install_restarts_service_script() {
+        assert_eq!(
+            install_commands(InitKind::BusyBox),
+            vec![vec!["/etc/init.d/S99miniboard-ipd", "restart"]]
         );
     }
 
@@ -626,7 +687,10 @@ mod command_tests {
             .contains(&"run:systemctl daemon-reload".to_string()));
         assert!(ops
             .events
-            .contains(&"run:systemctl enable --now miniboard-ipd.service".to_string()));
+            .contains(&"run:systemctl enable miniboard-ipd.service".to_string()));
+        assert!(ops
+            .events
+            .contains(&"run:systemctl restart miniboard-ipd.service".to_string()));
     }
 
     #[test]
@@ -644,7 +708,10 @@ mod command_tests {
             .contains(&"run:systemctl daemon-reload".to_string()));
         assert!(ops
             .events
-            .contains(&"run:systemctl enable --now miniboard-ipd.service".to_string()));
+            .contains(&"run:systemctl enable miniboard-ipd.service".to_string()));
+        assert!(ops
+            .events
+            .contains(&"run:systemctl restart miniboard-ipd.service".to_string()));
     }
 
     #[test]
