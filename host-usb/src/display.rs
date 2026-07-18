@@ -40,7 +40,7 @@ const DOT_SIZE: u16 = 5;
 const ROW_GAP: u16 = 8;
 const SCREEN_WIDTH: u16 = 160;
 const SCREEN_HEIGHT: u16 = 80;
-const RGB565_GREEN: u16 = 0x07e0;
+const RGB565_TEXT: u16 = 0x5fd0;
 const RGB565_BLACK: u16 = 0x0000;
 const KEEPALIVE_X: u16 = SCREEN_WIDTH - 1;
 const KEEPALIVE_Y: u16 = SCREEN_HEIGHT - 1;
@@ -68,7 +68,7 @@ impl DisplayRenderer {
             writes.push(packet(add_ram_masked_packet(address), false));
         }
 
-        writes.push(packet(set_color_packet(RGB565_GREEN, 0), false));
+        writes.push(packet(set_color_packet(RGB565_TEXT, RGB565_BLACK), false));
         writes.push(packet(load_ram_mix_show_packet(IP_BACKGROUND_PAGE), false));
 
         for dot in layout.dots {
@@ -156,7 +156,7 @@ fn dot_writes(dot: DotGlyph) -> Vec<WireWrite> {
         .chunks_exact_mut(2)
         .take((DOT_SIZE as usize) * (DOT_SIZE as usize))
     {
-        pixel.copy_from_slice(&RGB565_GREEN.to_be_bytes());
+        pixel.copy_from_slice(&RGB565_TEXT.to_be_bytes());
     }
 
     vec![
@@ -282,6 +282,25 @@ mod tests {
         assert!(writes
             .iter()
             .any(|write| write.bytes == [0x02, 0x03, 0x11, 0x01, 0xf4, 0x00]));
+    }
+
+    #[test]
+    fn ip_render_uses_status_text_color_for_digits_and_dots() {
+        const STATUS_TEXT_RGB565: u16 = 0x5fd0;
+        let writes = DisplayRenderer::ip(Ipv4Addr::new(10, 0, 1, 5));
+        assert!(writes.iter().any(|write| {
+            write.bytes == set_color_packet(STATUS_TEXT_RGB565, RGB565_BLACK).to_vec()
+        }));
+
+        let dot_write = writes
+            .iter()
+            .find(|write| write.bytes.len() == 390)
+            .expect("expected direct dot pixel write");
+        assert_eq!(
+            &dot_write.bytes[2..4],
+            &STATUS_TEXT_RGB565.to_be_bytes(),
+            "dot pixels should use the same visible text color as the RAM digit overlay"
+        );
     }
 
     #[test]
