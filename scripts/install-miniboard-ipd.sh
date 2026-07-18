@@ -65,6 +65,13 @@ cleanup() {
   fi
 }
 
+stop_existing_service() {
+  if [ "$INSTALL_SERVICE" = "1" ] && [ -x "$INSTALL_PATH" ]; then
+    echo "Stopping existing service"
+    "$INSTALL_PATH" uninstall >/dev/null 2>&1 || true
+  fi
+}
+
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --no-service)
@@ -115,6 +122,8 @@ curl -fsSL "$RELEASE_BASE/$ASSET.sha256" -o "$CHECKSUM"
 
 tar -xzf "$ARCHIVE" -C "$TMP_DIR"
 [ -f "$TMP_DIR/miniboard-ipd" ] || die "archive did not contain miniboard-ipd"
+
+stop_existing_service
 
 INSTALL_DIR=$(dirname "$INSTALL_PATH")
 mkdir -p "$INSTALL_DIR"

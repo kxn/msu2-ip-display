@@ -192,6 +192,37 @@ test_replaces_busy_existing_binary_without_direct_copy_to_install_path() {
   assert_contains "echo \"\$0 \$*\" >> \"\$INSTALL_LOG\"" "$installed"
 }
 
+test_upgrade_stops_existing_service_before_replacing_binary() {
+  tmp=$(run_in_temp upgrade)
+  fixture_dir=$tmp/fixtures
+  fakebin=$tmp/fakebin
+  install_root=$tmp/root
+  log=$tmp/install.log
+  curl_log=$tmp/curl.log
+  installed=$install_root/usr/local/bin/miniboard-ipd
+  mkdir -p "$fixture_dir" "$(dirname "$installed")"
+  make_fixture linux-amd64 "$fixture_dir"
+  make_fake_curl "$fakebin" "$fixture_dir"
+  : > "$log"
+  : > "$curl_log"
+  cat > "$installed" <<'OLD'
+#!/bin/sh
+echo "old:$0 $*" >> "$INSTALL_LOG"
+OLD
+  chmod +x "$installed"
+
+  PATH="$fakebin:$PATH" \
+  MSU2_INSTALL_ROOT="$install_root" \
+  MSU2_INSTALLER_ARCH=x86_64 \
+  MSU2_RELEASE_BASE=https://example.invalid/releases/latest/download \
+  INSTALL_LOG="$log" \
+  CURL_LOG="$curl_log" \
+    sh "$INSTALLER" --interface eth0
+
+  assert_contains "old:$installed uninstall" "$log"
+  assert_contains "$installed install --interface eth0" "$log"
+}
+
 test_unsupported_arch_fails_before_download() {
   tmp=$(run_in_temp unsupported)
   fakebin=$tmp/fakebin
@@ -220,6 +251,7 @@ CURL
 test_installs_matching_arch_and_registers_service
 test_no_service_only_installs_binary
 test_replaces_busy_existing_binary_without_direct_copy_to_install_path
+test_upgrade_stops_existing_service_before_replacing_binary
 test_unsupported_arch_fails_before_download
 
 echo "install-miniboard-ipd tests passed"

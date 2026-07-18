@@ -57,6 +57,8 @@ const NLMSG_ERROR_BITS: u16 = 2;
 const NLMSG_DONE_BITS: u16 = 3;
 #[cfg(any(target_os = "linux", test))]
 const RTA_TABLE_BITS: u16 = 15;
+#[cfg(any(target_os = "linux", test))]
+const NETLINK_RECV_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(500);
 
 #[cfg(target_os = "linux")]
 pub fn collect_network_snapshot() -> std::io::Result<NetworkSnapshot> {
@@ -483,6 +485,12 @@ fn netlink_dump<T>(request: &NetlinkRequest<T>, protocol: i32) -> std::io::Resul
     if fd < 0 {
         return Err(std::io::Error::last_os_error());
     }
+    if let Err(err) = set_netlink_recv_timeout(fd) {
+        unsafe {
+            libc::close(fd);
+        }
+        return Err(err);
+    }
 
     let local = netlink_sockaddr(0);
     if unsafe {
@@ -543,6 +551,33 @@ fn netlink_dump<T>(request: &NetlinkRequest<T>, protocol: i32) -> std::io::Resul
         libc::close(fd);
     }
     Ok(out)
+}
+
+#[cfg(target_os = "linux")]
+fn set_netlink_recv_timeout(fd: libc::c_int) -> std::io::Result<()> {
+    let timeout = netlink_recv_timeout_timeval();
+    let rc = unsafe {
+        libc::setsockopt(
+            fd,
+            libc::SOL_SOCKET,
+            libc::SO_RCVTIMEO,
+            (&timeout as *const libc::timeval).cast(),
+            std::mem::size_of::<libc::timeval>() as libc::socklen_t,
+        )
+    };
+    if rc == 0 {
+        Ok(())
+    } else {
+        Err(std::io::Error::last_os_error())
+    }
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn netlink_recv_timeout_timeval() -> libc::timeval {
+    libc::timeval {
+        tv_sec: NETLINK_RECV_TIMEOUT.as_secs() as _,
+        tv_usec: NETLINK_RECV_TIMEOUT.subsec_micros() as _,
+    }
 }
 
 #[cfg(target_os = "linux")]
@@ -1052,5 +1087,14 @@ mod tests {
             read_rt_msg(&route_buf[1..]).unwrap().rtm_table,
             RT_TABLE_MAIN_BITS as u8
         );
+    }
+
+    #[test]
+    fn netlink_recv_timeout_is_subsecond_and_nonzero() {
+        let timeout = netlink_recv_timeout_timeval();
+
+        assert_eq!(timeout.tv_sec, 0);
+        assert!(timeout.tv_usec > 0);
+        assert!(timeout.tv_usec <= 500_000);
     }
 }
