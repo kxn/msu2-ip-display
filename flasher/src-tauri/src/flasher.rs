@@ -1,6 +1,9 @@
 use serde::Serialize;
 
-use crate::assets::{validate_image, FlashImage, PAGES_PER_IMAGE};
+use crate::assets::{
+    validate_asset, FlashAsset, HOST_IP_BG_PAGE, HOST_PENDING_PAGE, OFFLINE_VISIBLE_PAGE,
+    PAGE_BYTES,
+};
 use crate::device::PortIo;
 use crate::errors::{AppError, AppResult};
 use crate::protocol::{
@@ -38,7 +41,7 @@ impl Default for RetryPolicy {
     }
 }
 
-pub fn flash_images<P, F>(port: &mut P, images: &[FlashImage<'_>], mut emit: F) -> AppResult<()>
+pub fn flash_images<P, F>(port: &mut P, images: &[FlashAsset<'_>], mut emit: F) -> AppResult<()>
 where
     P: PortIo,
     F: FnMut(FlashProgress),
@@ -48,7 +51,7 @@ where
 
 pub fn flash_images_with_screen_status<P, F>(
     port: &mut P,
-    images: &[FlashImage<'_>],
+    images: &[FlashAsset<'_>],
     mut emit: F,
 ) -> AppResult<()>
 where
@@ -66,7 +69,7 @@ where
 
 fn flash_images_internal<P, F>(
     port: &mut P,
-    images: &[FlashImage<'_>],
+    images: &[FlashAsset<'_>],
     mut screen: Option<&mut ScreenStatus>,
     emit: &mut F,
 ) -> AppResult<()>
@@ -75,24 +78,24 @@ where
     F: FnMut(FlashProgress),
 {
     for image in images {
-        validate_image(image.label, image.bytes).map_err(|err| AppError::Asset(err.to_string()))?;
+        validate_asset(image).map_err(|err| AppError::Asset(err.to_string()))?;
     }
 
-    let total_pages = (images.len() as u32) * (PAGES_PER_IMAGE as u32);
+    let total_pages: u32 = images.iter().map(|image| image.page_count as u32).sum();
     let mut completed_pages = 0u32;
 
     for image in images {
         erase_pages(
             port,
             image.start_page,
-            PAGES_PER_IMAGE,
+            image.page_count,
             RetryPolicy::default(),
         )?;
 
-        for page_index in 0..PAGES_PER_IMAGE {
-            let offset = (page_index as usize) * 256;
-            let mut chunk = [0u8; 256];
-            chunk.copy_from_slice(&image.bytes[offset..offset + 256]);
+        for page_index in 0..image.page_count {
+            let offset = (page_index as usize) * PAGE_BYTES;
+            let mut chunk = [0u8; PAGE_BYTES];
+            chunk.copy_from_slice(&image.bytes[offset..offset + PAGE_BYTES]);
             let page = image.start_page as u32 + page_index as u32;
             write_page(port, page, &chunk, RetryPolicy::default())?;
             completed_pages += 1;
@@ -226,7 +229,12 @@ pub fn write_lcd_region<P: PortIo>(
 }
 
 pub fn preview_pages<P: PortIo>(port: &mut P) -> AppResult<()> {
-    for page in [0u16, 3826, 3926, 0] {
+    for page in [
+        OFFLINE_VISIBLE_PAGE,
+        HOST_PENDING_PAGE,
+        HOST_IP_BG_PAGE,
+        OFFLINE_VISIBLE_PAGE,
+    ] {
         port.write_all(&set_xy_packet(0, 0))?;
         port.read_idle(80, 20)?;
         port.write_all(&set_size_packet(160, 80))?;
@@ -241,7 +249,7 @@ pub fn preview_pages<P: PortIo>(port: &mut P) -> AppResult<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::assets::IMAGE_BYTES;
+    use crate::assets::{FlashImage, IMAGE_BYTES, PAGES_PER_IMAGE};
     use std::collections::VecDeque;
 
     struct MockPort {
@@ -320,6 +328,48 @@ mod tests {
     }
 
     #[test]
+    fn writes_variable_sized_assets() {
+        let logo = vec![0x5a; PAGE_BYTES * 6];
+        let directory = vec![0xa5; PAGE_BYTES];
+        let assets = [
+            FlashAsset {
+                label: "logo",
+                start_page: 3820,
+                page_count: 6,
+                bytes: &logo,
+            },
+            FlashAsset {
+                label: "directory",
+                start_page: 4094,
+                page_count: 1,
+                bytes: &directory,
+            },
+        ];
+        let mut port = MockPort::new();
+        let mut progress = Vec::new();
+
+        flash_images(&mut port, &assets, |event| progress.push(event)).unwrap();
+
+        assert_eq!(port.writes.len(), 9);
+        assert_eq!(port.writes[0], vec![0x03, 0x02, 0x0e, 0xec, 0x00, 0x06]);
+        assert_eq!(
+            &port.writes[1][384..390],
+            &[0x03, 0x03, 0x00, 0x0e, 0xec, 0x01]
+        );
+        assert_eq!(
+            &port.writes[6][384..390],
+            &[0x03, 0x03, 0x00, 0x0e, 0xf1, 0x01]
+        );
+        assert_eq!(port.writes[7], vec![0x03, 0x02, 0x0f, 0xfe, 0x00, 0x01]);
+        assert_eq!(
+            &port.writes[8][384..390],
+            &[0x03, 0x03, 0x00, 0x0f, 0xfe, 0x01]
+        );
+        assert_eq!(progress.last().unwrap().percent, 100);
+        assert_eq!(progress.last().unwrap().total_pages, 7);
+    }
+
+    #[test]
     fn preview_pages_sends_page_zero_last() {
         let mut port = MockPort::new();
         preview_pages(&mut port).unwrap();
@@ -331,8 +381,8 @@ mod tests {
             .collect();
         assert_eq!(photo_packets.len(), 4);
         assert_eq!(photo_packets[0], vec![0x02, 0x03, 0x00, 0x00, 0x00, 0x00]);
-        assert_eq!(photo_packets[1], vec![0x02, 0x03, 0x00, 0x0e, 0xf2, 0x00]);
-        assert_eq!(photo_packets[2], vec![0x02, 0x03, 0x00, 0x0f, 0x56, 0x00]);
+        assert_eq!(photo_packets[1], vec![0x02, 0x03, 0x00, 0x01, 0x2c, 0x00]);
+        assert_eq!(photo_packets[2], vec![0x02, 0x03, 0x00, 0x01, 0xf4, 0x00]);
         assert_eq!(photo_packets[3], vec![0x02, 0x03, 0x00, 0x00, 0x00, 0x00]);
     }
 
