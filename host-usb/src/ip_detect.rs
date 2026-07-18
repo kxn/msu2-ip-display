@@ -58,17 +58,15 @@ const NLMSG_DONE_BITS: u16 = 3;
 #[cfg(any(target_os = "linux", test))]
 const RTA_TABLE_BITS: u16 = 15;
 #[cfg(any(target_os = "linux", test))]
-const NETLINK_RECV_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(500);
+const NETLINK_RECV_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(200);
 
 #[cfg(target_os = "linux")]
 pub fn collect_network_snapshot() -> std::io::Result<NetworkSnapshot> {
-    let mut snapshot = NetworkSnapshot::default();
-    collect_ipv4_addresses_getifaddrs(&mut snapshot)?;
-    if let Err(err) = enrich_dynamic_flags_from_rtnetlink(&mut snapshot) {
-        crate::logging::debug(&format!("rtnetlink dynamic enrichment unavailable: {err}"));
-    }
-    collect_default_routes_rtnetlink(&mut snapshot)?;
-    Ok(snapshot)
+    collect_network_snapshot_best_effort(
+        collect_ipv4_addresses_getifaddrs,
+        enrich_dynamic_flags_from_rtnetlink,
+        collect_default_routes_rtnetlink,
+    )
 }
 
 #[cfg(not(target_os = "linux"))]
@@ -144,6 +142,30 @@ pub fn select_ipv4(snapshot: &NetworkSnapshot, config: &SelectionConfig) -> Sele
             }
         }
     }
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn collect_network_snapshot_best_effort<C, D, R>(
+    collect_addresses: C,
+    enrich_dynamic: D,
+    collect_routes: R,
+) -> std::io::Result<NetworkSnapshot>
+where
+    C: FnOnce(&mut NetworkSnapshot) -> std::io::Result<()>,
+    D: FnOnce(&mut NetworkSnapshot) -> std::io::Result<()>,
+    R: FnOnce(&mut NetworkSnapshot) -> std::io::Result<()>,
+{
+    let mut snapshot = NetworkSnapshot::default();
+    collect_addresses(&mut snapshot)?;
+
+    if let Err(err) = enrich_dynamic(&mut snapshot) {
+        crate::logging::debug(&format!("rtnetlink dynamic enrichment unavailable: {err}"));
+    }
+    if let Err(err) = collect_routes(&mut snapshot) {
+        crate::logging::debug(&format!("rtnetlink route enrichment unavailable: {err}"));
+    }
+
+    Ok(snapshot)
 }
 
 fn is_normal_ipv4(address: Ipv4Addr) -> bool {
@@ -900,6 +922,26 @@ mod tests {
     }
 
     #[test]
+    fn netlink_enrichment_errors_keep_collected_addresses() {
+        let snapshot = collect_network_snapshot_best_effort(
+            |snapshot| {
+                snapshot
+                    .addresses
+                    .push(addr("eth0", [192, 168, 55, 20], false));
+                Ok(())
+            },
+            |_snapshot| Err(std::io::Error::other("addr netlink stalled")),
+            |_snapshot| Err(std::io::Error::other("route netlink stalled")),
+        )
+        .unwrap();
+
+        assert_eq!(
+            select_ipv4(&snapshot, &SelectionConfig::default()),
+            Selection::Show(Ipv4Addr::new(192, 168, 55, 20))
+        );
+    }
+
+    #[test]
     fn permanent_flags_without_finite_lifetimes_are_not_dynamic() {
         assert!(!address_is_dynamic(
             IFA_F_PERMANENT_BITS,
@@ -1095,6 +1137,6 @@ mod tests {
 
         assert_eq!(timeout.tv_sec, 0);
         assert!(timeout.tv_usec > 0);
-        assert!(timeout.tv_usec <= 500_000);
+        assert!(timeout.tv_usec <= 200_000);
     }
 }

@@ -22,12 +22,17 @@ assert_contains() {
 make_fixture() {
   target=$1
   fixture_dir=$2
+  version=${3:-0.0.0}
   package_dir=$fixture_dir/package-$target
 
   mkdir -p "$package_dir"
-  cat > "$package_dir/miniboard-ipd" <<'BIN'
+  cat > "$package_dir/miniboard-ipd" <<BIN
 #!/bin/sh
-echo "$0 $*" >> "$INSTALL_LOG"
+if [ "\${1:-}" = "--version" ] || [ "\${1:-}" = "version" ]; then
+  echo "miniboard-ipd $version"
+  exit 0
+fi
+echo "\$0 \$*" >> "\$INSTALL_LOG"
 BIN
   chmod +x "$package_dir/miniboard-ipd"
 
@@ -49,10 +54,15 @@ set -eu
 
 out=
 url=
+write_format=
 while [ "$#" -gt 0 ]; do
   case "$1" in
     -o)
       out=$2
+      shift 2
+      ;;
+    -w)
+      write_format=$2
       shift 2
       ;;
     -*)
@@ -65,13 +75,32 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 
+[ -n "$url" ] || {
+  echo "fake curl requires url" >&2
+  exit 2
+}
+
+echo "$url" >> "$CURL_LOG"
+
+case "$url" in
+  */releases/latest)
+    tag=${FAKE_LATEST_TAG:-v0.0.0}
+    if [ -n "$write_format" ]; then
+      printf '%s\n' "https://github.com/kxn/msu2-ip-display/releases/tag/$tag"
+    fi
+    if [ -n "$out" ] && [ "$out" != "/dev/null" ]; then
+      : > "$out"
+    fi
+    exit 0
+    ;;
+esac
+
 [ -n "$out" ] || {
-  echo "fake curl requires -o" >&2
+  echo "fake curl requires -o for asset download" >&2
   exit 2
 }
 
 base=${url##*/}
-echo "$url" >> "$CURL_LOG"
 cp "$FIXTURE_DIR/$base" "$out"
 CURL
   chmod +x "$fakebin/curl"
@@ -124,6 +153,7 @@ test_installs_matching_arch_and_registers_service() {
   PATH="$fakebin:$PATH" \
   MSU2_INSTALL_ROOT="$install_root" \
   MSU2_INSTALLER_ARCH=x86_64 \
+  FAKE_LATEST_TAG=v0.0.0 \
   MSU2_RELEASE_BASE=https://example.invalid/releases/latest/download \
   INSTALL_LOG="$log" \
   CURL_LOG="$curl_log" \
@@ -152,6 +182,7 @@ test_no_service_only_installs_binary() {
   PATH="$fakebin:$PATH" \
   MSU2_INSTALL_ROOT="$install_root" \
   MSU2_INSTALLER_ARCH=armv7l \
+  FAKE_LATEST_TAG=v0.0.0 \
   MSU2_RELEASE_BASE=https://example.invalid/releases/latest/download \
   INSTALL_LOG="$log" \
   CURL_LOG="$curl_log" \
@@ -182,6 +213,7 @@ test_replaces_busy_existing_binary_without_direct_copy_to_install_path() {
   PATH="$fakebin:$PATH" \
   MSU2_INSTALL_ROOT="$install_root" \
   MSU2_INSTALLER_ARCH=x86_64 \
+  FAKE_LATEST_TAG=v0.0.0 \
   MSU2_RELEASE_BASE=https://example.invalid/releases/latest/download \
   INSTALL_LOG="$log" \
   CURL_LOG="$curl_log" \
@@ -214,6 +246,7 @@ OLD
   PATH="$fakebin:$PATH" \
   MSU2_INSTALL_ROOT="$install_root" \
   MSU2_INSTALLER_ARCH=x86_64 \
+  FAKE_LATEST_TAG=v0.0.0 \
   MSU2_RELEASE_BASE=https://example.invalid/releases/latest/download \
   INSTALL_LOG="$log" \
   CURL_LOG="$curl_log" \
@@ -221,6 +254,59 @@ OLD
 
   assert_contains "old:$installed uninstall" "$log"
   assert_contains "$installed install --interface eth0" "$log"
+}
+
+test_resolves_latest_release_and_verifies_installed_version() {
+  tmp=$(run_in_temp latest-version)
+  fixture_dir=$tmp/fixtures
+  fakebin=$tmp/fakebin
+  install_root=$tmp/root
+  log=$tmp/install.log
+  curl_log=$tmp/curl.log
+  mkdir -p "$fixture_dir"
+  make_fixture linux-amd64 "$fixture_dir" 9.8.7
+  make_fake_curl "$fakebin" "$fixture_dir"
+  : > "$log"
+  : > "$curl_log"
+
+  PATH="$fakebin:$PATH" \
+  MSU2_INSTALL_ROOT="$install_root" \
+  MSU2_INSTALLER_ARCH=x86_64 \
+  FAKE_LATEST_TAG=v9.8.7 \
+  INSTALL_LOG="$log" \
+  CURL_LOG="$curl_log" \
+    sh "$INSTALLER" --no-service > "$tmp/out"
+
+  assert_contains "https://github.com/kxn/msu2-ip-display/releases/latest" "$curl_log"
+  assert_contains "https://github.com/kxn/msu2-ip-display/releases/download/v9.8.7/miniboard-ipd-linux-amd64.tar.gz" "$curl_log"
+  assert_contains "Resolved release v9.8.7" "$tmp/out"
+  assert_contains "Installed version: miniboard-ipd 9.8.7" "$tmp/out"
+}
+
+test_installed_version_mismatch_fails() {
+  tmp=$(run_in_temp version-mismatch)
+  fixture_dir=$tmp/fixtures
+  fakebin=$tmp/fakebin
+  install_root=$tmp/root
+  log=$tmp/install.log
+  curl_log=$tmp/curl.log
+  mkdir -p "$fixture_dir"
+  make_fixture linux-amd64 "$fixture_dir" 9.8.6
+  make_fake_curl "$fakebin" "$fixture_dir"
+  : > "$log"
+  : > "$curl_log"
+
+  if PATH="$fakebin:$PATH" \
+    MSU2_INSTALL_ROOT="$install_root" \
+    MSU2_INSTALLER_ARCH=x86_64 \
+    FAKE_LATEST_TAG=v9.8.7 \
+    INSTALL_LOG="$log" \
+    CURL_LOG="$curl_log" \
+      sh "$INSTALLER" --no-service > "$tmp/out" 2> "$tmp/err"; then
+    fail "version mismatch should fail"
+  fi
+
+  assert_contains "installed version mismatch" "$tmp/err"
 }
 
 test_unsupported_arch_fails_before_download() {
@@ -252,6 +338,8 @@ test_installs_matching_arch_and_registers_service
 test_no_service_only_installs_binary
 test_replaces_busy_existing_binary_without_direct_copy_to_install_path
 test_upgrade_stops_existing_service_before_replacing_binary
+test_resolves_latest_release_and_verifies_installed_version
+test_installed_version_mismatch_fails
 test_unsupported_arch_fails_before_download
 
 echo "install-miniboard-ipd tests passed"

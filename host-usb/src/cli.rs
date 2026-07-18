@@ -7,6 +7,7 @@ pub enum Command {
     Install(RunOptions),
     Uninstall,
     Status,
+    Version,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -32,7 +33,7 @@ where
     let mut args = args.into_iter().map(Into::into);
     let Some(command) = args.next() else {
         return Err(CliError(
-            "expected command: run, install, uninstall, status".to_string(),
+            "expected command: run, install, uninstall, status, version".to_string(),
         ));
     };
 
@@ -41,8 +42,13 @@ where
         "install" => parse_run_options(args).map(Command::Install),
         "uninstall" => reject_extra("uninstall", args).map(|_| Command::Uninstall),
         "status" => reject_extra("status", args).map(|_| Command::Status),
+        "version" | "--version" => reject_extra(&command, args).map(|_| Command::Version),
         other => Err(CliError(format!("unknown command {other}"))),
     }
+}
+
+pub fn version_string() -> String {
+    format!("miniboard-ipd {}", env!("CARGO_PKG_VERSION"))
 }
 
 impl RunOptions {
@@ -218,5 +224,15 @@ mod tests {
             };
             assert_eq!(options.interface.as_deref(), Some(value));
         }
+    }
+
+    #[test]
+    fn version_commands_parse_without_options() {
+        assert_eq!(parse_args(["--version"]).unwrap(), Command::Version);
+        assert_eq!(parse_args(["version"]).unwrap(), Command::Version);
+        assert_eq!(
+            version_string(),
+            format!("miniboard-ipd {}", env!("CARGO_PKG_VERSION"))
+        );
     }
 }

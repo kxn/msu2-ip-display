@@ -2,7 +2,6 @@
 set -eu
 
 REPO=${MSU2_REPO:-kxn/msu2-ip-display}
-RELEASE_BASE=${MSU2_RELEASE_BASE:-https://github.com/$REPO/releases/latest/download}
 INSTALL_ROOT=${MSU2_INSTALL_ROOT:-}
 INSTALL_PATH="$INSTALL_ROOT/usr/local/bin/miniboard-ipd"
 INSTALL_SERVICE=1
@@ -31,6 +30,37 @@ die() {
 
 need_command() {
   command -v "$1" >/dev/null 2>&1 || die "missing required command: $1"
+}
+
+binary_version() {
+  if [ -x "$1" ]; then
+    "$1" --version 2>/dev/null || true
+  fi
+}
+
+resolve_release_tag() {
+  if [ "${MSU2_RELEASE_TAG:-}" ]; then
+    echo "$MSU2_RELEASE_TAG"
+    return
+  fi
+
+  latest_url="https://github.com/$REPO/releases/latest"
+  effective=$(curl -fsSLI -o /dev/null -w '%{url_effective}' "$latest_url") || die "failed to resolve latest release"
+  tag=${effective##*/}
+  case "$tag" in
+    ""|latest)
+      die "could not resolve latest release tag from $effective"
+      ;;
+  esac
+  echo "$tag"
+}
+
+expected_version_for_tag() {
+  tag=$1
+  case "$tag" in
+    v*) echo "${tag#v}" ;;
+    *) echo "$tag" ;;
+  esac
 }
 
 target_for_arch() {
@@ -105,12 +135,17 @@ ARCH=${MSU2_INSTALLER_ARCH:-$(uname -m)}
 TARGET=$(target_for_arch "$ARCH")
 ASSET="miniboard-ipd-$TARGET.tar.gz"
 
+RELEASE_TAG=$(resolve_release_tag)
+EXPECTED_VERSION=$(expected_version_for_tag "$RELEASE_TAG")
+RELEASE_BASE=${MSU2_RELEASE_BASE:-https://github.com/$REPO/releases/download/$RELEASE_TAG}
+
 TMP_DIR=$(make_tmp_dir)
 trap cleanup EXIT HUP INT TERM
 
 ARCHIVE="$TMP_DIR/$ASSET"
 CHECKSUM="$TMP_DIR/$ASSET.sha256"
 
+echo "Resolved release $RELEASE_TAG"
 echo "Downloading $ASSET"
 curl -fsSL "$RELEASE_BASE/$ASSET" -o "$ARCHIVE"
 curl -fsSL "$RELEASE_BASE/$ASSET.sha256" -o "$CHECKSUM"
@@ -123,6 +158,11 @@ curl -fsSL "$RELEASE_BASE/$ASSET.sha256" -o "$CHECKSUM"
 tar -xzf "$ARCHIVE" -C "$TMP_DIR"
 [ -f "$TMP_DIR/miniboard-ipd" ] || die "archive did not contain miniboard-ipd"
 
+OLD_VERSION=$(binary_version "$INSTALL_PATH")
+if [ "$OLD_VERSION" ]; then
+  echo "Existing version: $OLD_VERSION"
+fi
+
 stop_existing_service
 
 INSTALL_DIR=$(dirname "$INSTALL_PATH")
@@ -134,6 +174,16 @@ mv -f "$INSTALL_TMP" "$INSTALL_PATH"
 INSTALL_TMP=
 
 echo "Installed $INSTALL_PATH"
+INSTALLED_VERSION=$(binary_version "$INSTALL_PATH")
+if [ "$INSTALLED_VERSION" ]; then
+  echo "Installed version: $INSTALLED_VERSION"
+else
+  die "installed binary does not report a version"
+fi
+
+if [ "$INSTALLED_VERSION" != "miniboard-ipd $EXPECTED_VERSION" ]; then
+  die "installed version mismatch: expected miniboard-ipd $EXPECTED_VERSION, got $INSTALLED_VERSION"
+fi
 
 if [ "$INSTALL_SERVICE" = "1" ]; then
   echo "Registering service"

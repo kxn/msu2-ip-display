@@ -9,6 +9,7 @@ use crate::ip_detect::NetworkSnapshot;
 use crate::serial::{classify_io_error, SerialErrorKind, TimeoutCounter};
 
 const KEEPALIVE_INTERVAL: Duration = Duration::from_millis(800);
+const NETWORK_SNAPSHOT_STALE_INTERVAL: Duration = Duration::from_secs(2);
 const CONNECT_RETRY_MIN_INTERVAL: Duration = Duration::from_millis(500);
 const CONNECT_RETRY_MAX_INTERVAL: Duration = Duration::from_secs(2);
 
@@ -27,6 +28,7 @@ pub struct Runtime<T> {
     io: T,
     connected: bool,
     last_keepalive: Instant,
+    last_network_snapshot: Instant,
     timeout_counter: TimeoutCounter,
     pending_display_action: Option<DaemonAction>,
     next_connect_at: Option<Instant>,
@@ -41,6 +43,7 @@ impl<T: RuntimeIo> Runtime<T> {
             io,
             connected: false,
             last_keepalive: now,
+            last_network_snapshot: now,
             timeout_counter: TimeoutCounter::new(3),
             pending_display_action: None,
             next_connect_at: None,
@@ -81,6 +84,7 @@ impl<T: RuntimeIo> Runtime<T> {
             self.connected = true;
             self.reset_connect_retry();
             self.timeout_counter.record_success();
+            self.last_network_snapshot = self.io.now();
 
             for action in self.daemon.handle_event(DaemonEvent::HandshakeOk) {
                 if let Err(err) = self.apply_daemon_action(action) {
@@ -99,8 +103,29 @@ impl<T: RuntimeIo> Runtime<T> {
 
         let now = self.io.now();
 
-        match self.io.network_snapshot() {
+        let snapshot = match self.io.network_snapshot() {
             Ok(Some(snapshot)) => {
+                self.last_network_snapshot = now;
+                Some(snapshot)
+            }
+            Ok(None) => self.stale_network_snapshot(now),
+            Err(err) => {
+                crate::logging::debug(&format!("network snapshot unavailable: {err}"));
+                self.stale_network_snapshot(now)
+            }
+        };
+
+        if let Some(snapshot) = snapshot {
+            crate::logging::debug(&format!(
+                "network snapshot: {} addresses, {} default routes",
+                snapshot.addresses.len(),
+                snapshot
+                    .routes
+                    .iter()
+                    .filter(|route| route.is_default)
+                    .count()
+            ));
+            {
                 for action in self
                     .daemon
                     .handle_event(DaemonEvent::NetworkSnapshot { snapshot, now })
@@ -109,10 +134,6 @@ impl<T: RuntimeIo> Runtime<T> {
                         return self.handle_runtime_error("display update", err, true);
                     }
                 }
-            }
-            Ok(None) => {}
-            Err(err) => {
-                crate::logging::debug(&format!("network snapshot unavailable: {err}"));
             }
         }
 
@@ -242,6 +263,14 @@ impl<T: RuntimeIo> Runtime<T> {
     fn reset_connect_retry(&mut self) {
         self.next_connect_at = None;
         self.connect_backoff = CONNECT_RETRY_MIN_INTERVAL;
+    }
+
+    fn stale_network_snapshot(&self, now: Instant) -> Option<NetworkSnapshot> {
+        if now.duration_since(self.last_network_snapshot) >= NETWORK_SNAPSHOT_STALE_INTERVAL {
+            Some(NetworkSnapshot::default())
+        } else {
+            None
+        }
     }
 }
 
@@ -730,6 +759,38 @@ mod tests {
             1
         );
         assert!(!runtime.io.events.iter().any(|event| event == "disconnect"));
+    }
+
+    #[test]
+    fn stale_network_snapshot_returns_display_to_pending() {
+        let start = Instant::now();
+        let io = FakeIo {
+            now: Cell::new(Some(start)),
+            devices: vec![target_device()],
+            snapshot_results: VecDeque::from([
+                Ok(Some(ipv4_snapshot([192, 168, 1, 20]))),
+                Ok(None),
+                Ok(None),
+            ]),
+            ..FakeIo::default()
+        };
+        let mut runtime = Runtime::new(options(), io);
+
+        runtime.tick().unwrap();
+        runtime.io.set_now(start + Duration::from_millis(1000));
+        runtime.tick().unwrap();
+        runtime.io.set_now(start + Duration::from_millis(2500));
+        runtime.tick().unwrap();
+
+        assert_eq!(
+            runtime
+                .io
+                .events
+                .iter()
+                .filter(|event| event.as_str() == "writes:pending")
+                .count(),
+            2
+        );
     }
 
     #[test]

@@ -54,6 +54,9 @@ fn real_main() -> std::io::Result<()> {
             let mut ops = RealInstallOps;
             run_status(detect_init(&current_probe()), &mut ops)?;
         }
+        Command::Version => {
+            println!("{}", miniboard_ipd::cli::version_string());
+        }
     }
 
     Ok(())
