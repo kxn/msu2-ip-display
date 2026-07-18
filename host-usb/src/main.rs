@@ -27,6 +27,9 @@ fn real_main() -> std::io::Result<()> {
 
     match command {
         Command::Run(options) => {
+            if options.debug {
+                miniboard_ipd::logging::enable_debug();
+            }
             miniboard_ipd::logging::info(&format!("starting foreground daemon: {:?}", options));
             miniboard_ipd::logging::info(&format!(
                 "usb event mode: {:?}",

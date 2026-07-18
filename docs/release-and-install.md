@@ -35,6 +35,14 @@ To bind the installed service to a fixed network interface:
 curl -fsSL https://raw.githubusercontent.com/kxn/msu2-ip-display/master/scripts/install-miniboard-ipd.sh | sudo sh -s -- --interface eth0
 ```
 
+For field diagnostics, enable detailed daemon logging:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/kxn/msu2-ip-display/master/scripts/install-miniboard-ipd.sh | sudo sh -s -- --debug
+```
+
+On OpenRC systems, the generated service writes stdout/stderr to `/var/log/miniboard-ipd.log`.
+
 The installer:
 
 1. Detects the current architecture with `uname -m`.

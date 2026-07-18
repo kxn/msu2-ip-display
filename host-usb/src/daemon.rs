@@ -131,6 +131,7 @@ mod tests {
         RunOptions {
             interface: None,
             dhcp_fail_delay: Duration::from_secs(45),
+            debug: false,
         }
     }
 

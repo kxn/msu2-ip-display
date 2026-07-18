@@ -11,6 +11,7 @@ Examples:
 ```bash
 miniboard-ipd run
 miniboard-ipd run --interface eth0
+miniboard-ipd run --debug
 miniboard-ipd install --interface eth0 --dhcp-fail-delay-seconds 45
 ```
 
@@ -27,6 +28,14 @@ Pass daemon options after `sh -s --`; they are embedded into the generated servi
 ```bash
 curl -fsSL https://raw.githubusercontent.com/kxn/msu2-ip-display/master/scripts/install-miniboard-ipd.sh | sudo sh -s -- --interface eth0 --dhcp-fail-delay-seconds 45
 ```
+
+Enable detailed daemon logging while troubleshooting:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/kxn/msu2-ip-display/master/scripts/install-miniboard-ipd.sh | sudo sh -s -- --debug
+```
+
+OpenRC services write stdout/stderr to `/var/log/miniboard-ipd.log`.
 
 Install only the binary without registering a service:
 
@@ -46,9 +55,10 @@ cargo build --release
 ```bash
 miniboard-ipd run
 miniboard-ipd run --interface eth0
+miniboard-ipd run --debug
 miniboard-ipd install --interface eth0 --dhcp-fail-delay-seconds 45
 miniboard-ipd uninstall
 miniboard-ipd status
 ```
 
-`install` stores command-line options in the generated service/init command. v1 does not read a config file.
+`install` stores command-line options, including `--debug`, in the generated service/init command. v1 does not read a config file.

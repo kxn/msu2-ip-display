@@ -358,7 +358,7 @@ fn render_openrc(spec: &InstallSpec) -> ServiceRender {
     ServiceRender {
         path: "/etc/init.d/miniboard-ipd".to_string(),
         contents: format!(
-            "#!/sbin/openrc-run\ncommand=\"{}\"\ncommand_args=\"{}\"\ncommand_background=true\npidfile=\"/run/miniboard-ipd.pid\"\ndepend() {{\n\tneed localmount\n\tafter net\n}}\n",
+            "#!/sbin/openrc-run\ncommand=\"{}\"\ncommand_args=\"{}\"\ncommand_background=true\npidfile=\"/run/miniboard-ipd.pid\"\noutput_log=\"/var/log/miniboard-ipd.log\"\nerror_log=\"/var/log/miniboard-ipd.log\"\ndepend() {{\n\tneed localmount\n}}\n",
             spec.binary_path,
             command_args(spec)
         ),
@@ -473,6 +473,26 @@ mod tests {
         assert!(render
             .contents
             .contains("command_args=\"run --interface eth0 --dhcp-fail-delay-seconds 45\""));
+    }
+
+    #[test]
+    fn openrc_script_does_not_wait_for_network() {
+        let render = render_service(InitKind::OpenRc, &spec());
+
+        assert!(!render.contents.contains("after net"));
+        assert!(!render.contents.contains("need net"));
+    }
+
+    #[test]
+    fn openrc_script_writes_service_output_to_log_file() {
+        let render = render_service(InitKind::OpenRc, &spec());
+
+        assert!(render
+            .contents
+            .contains("output_log=\"/var/log/miniboard-ipd.log\""));
+        assert!(render
+            .contents
+            .contains("error_log=\"/var/log/miniboard-ipd.log\""));
     }
 
     #[test]

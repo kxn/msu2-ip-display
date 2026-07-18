@@ -10,6 +10,7 @@ use crate::serial::{classify_io_error, SerialErrorKind, TimeoutCounter};
 
 const KEEPALIVE_INTERVAL: Duration = Duration::from_millis(800);
 const NETWORK_SNAPSHOT_STALE_INTERVAL: Duration = Duration::from_secs(2);
+const STATUS_PAGE_REFRESH_INTERVAL: Duration = Duration::from_secs(2);
 const CONNECT_RETRY_MIN_INTERVAL: Duration = Duration::from_millis(500);
 const CONNECT_RETRY_MAX_INTERVAL: Duration = Duration::from_secs(2);
 
@@ -29,6 +30,7 @@ pub struct Runtime<T> {
     connected: bool,
     last_keepalive: Instant,
     last_network_snapshot: Instant,
+    last_status_page_refresh: Instant,
     timeout_counter: TimeoutCounter,
     pending_display_action: Option<DaemonAction>,
     next_connect_at: Option<Instant>,
@@ -44,6 +46,7 @@ impl<T: RuntimeIo> Runtime<T> {
             connected: false,
             last_keepalive: now,
             last_network_snapshot: now,
+            last_status_page_refresh: now,
             timeout_counter: TimeoutCounter::new(3),
             pending_display_action: None,
             next_connect_at: None,
@@ -54,6 +57,7 @@ impl<T: RuntimeIo> Runtime<T> {
     pub fn tick(&mut self) -> io::Result<()> {
         if !self.connected {
             let devices = self.io.scan_devices()?;
+            crate::logging::debug(&format!("scan found {} target tty(s)", devices.len()));
             let Some(device) = devices.first() else {
                 if self.daemon.state != DaemonState::Listening {
                     self.disconnect_device();
@@ -65,13 +69,14 @@ impl<T: RuntimeIo> Runtime<T> {
 
             if self.daemon.state == DaemonState::Listening {
                 for action in self.daemon.handle_event(DaemonEvent::DeviceCandidateFound) {
-                    self.apply_action(action)?;
+                    self.apply_action(&action)?;
                 }
             }
 
             if let Some(next_connect_at) = self.next_connect_at {
                 let now = self.io.now();
                 if now < next_connect_at {
+                    crate::logging::debug("connect retry backoff active");
                     self.io.sleep(Duration::from_millis(500));
                     return Ok(());
                 }
@@ -84,10 +89,13 @@ impl<T: RuntimeIo> Runtime<T> {
             self.connected = true;
             self.reset_connect_retry();
             self.timeout_counter.record_success();
-            self.last_network_snapshot = self.io.now();
+            let now = self.io.now();
+            self.last_keepalive = now;
+            self.last_network_snapshot = now;
+            self.last_status_page_refresh = now;
 
             for action in self.daemon.handle_event(DaemonEvent::HandshakeOk) {
-                if let Err(err) = self.apply_daemon_action(action) {
+                if let Err(err) = self.apply_daemon_action(action, DisplayActionLog::StateChange) {
                     self.handle_connect_failure("show pending", err);
                     return Ok(());
                 }
@@ -95,10 +103,14 @@ impl<T: RuntimeIo> Runtime<T> {
         }
 
         if let Some(action) = self.pending_display_action.clone() {
-            if let Err(err) = self.apply_action(action) {
+            if let Err(err) = self.apply_action(&action) {
                 return self.handle_runtime_error("display retry", err, true);
             }
+            log_display_action(&action, DisplayActionLog::Refresh);
             self.pending_display_action = None;
+            let now = self.io.now();
+            self.last_keepalive = now;
+            self.last_status_page_refresh = now;
         }
 
         let now = self.io.now();
@@ -108,7 +120,10 @@ impl<T: RuntimeIo> Runtime<T> {
                 self.last_network_snapshot = now;
                 Some(snapshot)
             }
-            Ok(None) => self.stale_network_snapshot(now),
+            Ok(None) => {
+                crate::logging::debug("network snapshot worker has no new result");
+                self.stale_network_snapshot(now)
+            }
             Err(err) => {
                 crate::logging::debug(&format!("network snapshot unavailable: {err}"));
                 self.stale_network_snapshot(now)
@@ -130,17 +145,27 @@ impl<T: RuntimeIo> Runtime<T> {
                     .daemon
                     .handle_event(DaemonEvent::NetworkSnapshot { snapshot, now })
                 {
-                    if let Err(err) = self.apply_daemon_action(action) {
+                    if let Err(err) =
+                        self.apply_daemon_action(action, DisplayActionLog::StateChange)
+                    {
                         return self.handle_runtime_error("display update", err, true);
                     }
                 }
             }
         }
 
+        if let Some(action) = self.status_page_refresh_action(now) {
+            if let Err(err) = self.apply_daemon_action(action, DisplayActionLog::Refresh) {
+                return self.handle_runtime_error("status page refresh", err, true);
+            }
+            self.last_status_page_refresh = now;
+        }
+
         if now.duration_since(self.last_keepalive) >= KEEPALIVE_INTERVAL {
             if let Err(err) = self.io.send_writes(&DisplayRenderer::keepalive()) {
                 return self.handle_runtime_error("keepalive", err, true);
             }
+            crate::logging::debug("keepalive ok");
             self.timeout_counter.record_success();
             self.last_keepalive = now;
         }
@@ -149,7 +174,11 @@ impl<T: RuntimeIo> Runtime<T> {
         Ok(())
     }
 
-    fn apply_daemon_action(&mut self, action: DaemonAction) -> io::Result<()> {
+    fn apply_daemon_action(
+        &mut self,
+        action: DaemonAction,
+        log: DisplayActionLog,
+    ) -> io::Result<()> {
         let is_display_action = matches!(
             action,
             DaemonAction::ShowPending | DaemonAction::ShowDhcpFailed | DaemonAction::ShowIp(_)
@@ -157,14 +186,18 @@ impl<T: RuntimeIo> Runtime<T> {
         if is_display_action {
             self.pending_display_action = Some(action.clone());
         }
-        self.apply_action(action)?;
+        self.apply_action(&action)?;
         if is_display_action {
+            log_display_action(&action, log);
             self.pending_display_action = None;
+            let now = self.io.now();
+            self.last_keepalive = now;
+            self.last_status_page_refresh = now;
         }
         Ok(())
     }
 
-    fn apply_action(&mut self, action: DaemonAction) -> io::Result<()> {
+    fn apply_action(&mut self, action: &DaemonAction) -> io::Result<()> {
         match action {
             DaemonAction::OpenDevice => Ok(()),
             DaemonAction::CloseDevice => {
@@ -183,7 +216,7 @@ impl<T: RuntimeIo> Runtime<T> {
                 Ok(())
             }
             DaemonAction::ShowIp(ip) => {
-                self.io.send_writes(&DisplayRenderer::ip(ip))?;
+                self.io.send_writes(&DisplayRenderer::ip(*ip))?;
                 self.timeout_counter.record_success();
                 Ok(())
             }
@@ -193,7 +226,7 @@ impl<T: RuntimeIo> Runtime<T> {
     fn disconnect_device(&mut self) {
         self.pending_display_action = None;
         for action in self.daemon.handle_event(DaemonEvent::DeviceDisconnected) {
-            let _ = self.apply_action(action);
+            let _ = self.apply_action(&action);
         }
         self.reset_connect_retry();
         self.timeout_counter.record_success();
@@ -267,10 +300,44 @@ impl<T: RuntimeIo> Runtime<T> {
 
     fn stale_network_snapshot(&self, now: Instant) -> Option<NetworkSnapshot> {
         if now.duration_since(self.last_network_snapshot) >= NETWORK_SNAPSHOT_STALE_INTERVAL {
+            crate::logging::debug("using stale empty network snapshot");
             Some(NetworkSnapshot::default())
         } else {
             None
         }
+    }
+
+    fn status_page_refresh_action(&self, now: Instant) -> Option<DaemonAction> {
+        if now.duration_since(self.last_status_page_refresh) < STATUS_PAGE_REFRESH_INTERVAL {
+            return None;
+        }
+
+        match self.daemon.state {
+            DaemonState::ConnectedPendingIp => Some(DaemonAction::ShowPending),
+            DaemonState::ConnectedDhcpFailed => Some(DaemonAction::ShowDhcpFailed),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DisplayActionLog {
+    StateChange,
+    Refresh,
+}
+
+fn log_display_action(action: &DaemonAction, mode: DisplayActionLog) {
+    let prefix = match mode {
+        DisplayActionLog::StateChange => "display",
+        DisplayActionLog::Refresh => "refresh display",
+    };
+    match action {
+        DaemonAction::ShowPending => crate::logging::info(&format!("{prefix}: pending IP page")),
+        DaemonAction::ShowDhcpFailed => {
+            crate::logging::info(&format!("{prefix}: DHCP failed page"))
+        }
+        DaemonAction::ShowIp(ip) => crate::logging::info(&format!("{prefix}: IP {ip}")),
+        DaemonAction::OpenDevice | DaemonAction::CloseDevice => {}
     }
 }
 
@@ -486,6 +553,7 @@ mod tests {
         RunOptions {
             interface: None,
             dhcp_fail_delay: Duration::from_secs(45),
+            debug: false,
         }
     }
 
@@ -749,15 +817,7 @@ mod tests {
                 .count(),
             1
         );
-        assert_eq!(
-            runtime
-                .io
-                .events
-                .iter()
-                .filter(|event| event.as_str() == "writes:other")
-                .count(),
-            1
-        );
+        assert!(runtime.io.events.iter().any(|event| event == "writes:ip"));
         assert!(!runtime.io.events.iter().any(|event| event == "disconnect"));
     }
 
@@ -780,6 +840,71 @@ mod tests {
         runtime.io.set_now(start + Duration::from_millis(1000));
         runtime.tick().unwrap();
         runtime.io.set_now(start + Duration::from_millis(2500));
+        runtime.tick().unwrap();
+
+        assert_eq!(
+            runtime
+                .io
+                .events
+                .iter()
+                .filter(|event| event.as_str() == "writes:pending")
+                .count(),
+            2
+        );
+    }
+
+    #[test]
+    fn pending_page_is_periodically_refreshed_while_waiting_for_ip() {
+        let start = Instant::now();
+        let io = FakeIo {
+            now: Cell::new(Some(start)),
+            devices: vec![target_device()],
+            snapshot_results: VecDeque::from([
+                Ok(Some(NetworkSnapshot::default())),
+                Ok(Some(NetworkSnapshot::default())),
+            ]),
+            ..FakeIo::default()
+        };
+        let mut runtime = Runtime::new(options(), io);
+
+        runtime.tick().unwrap();
+        runtime.io.set_now(start + Duration::from_millis(2100));
+        runtime.tick().unwrap();
+
+        assert_eq!(
+            runtime
+                .io
+                .events
+                .iter()
+                .filter(|event| event.as_str() == "writes:pending")
+                .count(),
+            2
+        );
+    }
+
+    #[test]
+    fn failure_candidate_keeps_pending_page_visible_before_failure_delay() {
+        let start = Instant::now();
+        let link_local = NetworkSnapshot {
+            addresses: vec![AddressCandidate {
+                interface: "eth0".to_string(),
+                address: Ipv4Addr::new(169, 254, 1, 2),
+                is_dynamic: true,
+                is_up: true,
+                is_lower_up: true,
+            }],
+            routes: vec![],
+        };
+        let io = FakeIo {
+            now: Cell::new(Some(start)),
+            devices: vec![target_device()],
+            snapshot_results: VecDeque::from([Ok(Some(link_local.clone())), Ok(Some(link_local))]),
+            ..FakeIo::default()
+        };
+        let mut runtime = Runtime::new(options(), io);
+
+        runtime.tick().unwrap();
+        runtime.io.set_now(start + Duration::from_millis(2100));
         runtime.tick().unwrap();
 
         assert_eq!(

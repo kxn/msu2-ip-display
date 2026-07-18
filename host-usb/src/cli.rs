@@ -14,6 +14,7 @@ pub enum Command {
 pub struct RunOptions {
     pub interface: Option<String>,
     pub dhcp_fail_delay: Duration,
+    pub debug: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -60,6 +61,9 @@ impl RunOptions {
         }
         out.push("--dhcp-fail-delay-seconds".to_string());
         out.push(self.dhcp_fail_delay.as_secs().to_string());
+        if self.debug {
+            out.push("--debug".to_string());
+        }
         out
     }
 }
@@ -83,6 +87,7 @@ where
     let mut options = RunOptions {
         interface: None,
         dhcp_fail_delay: Duration::from_secs(45),
+        debug: false,
     };
 
     while let Some(arg) = args.next() {
@@ -111,6 +116,9 @@ where
                     ));
                 }
                 options.dhcp_fail_delay = Duration::from_secs(seconds);
+            }
+            "--debug" => {
+                options.debug = true;
             }
             other => return Err(CliError(format!("unknown option {other}"))),
         }
@@ -151,6 +159,7 @@ mod tests {
             Command::Run(RunOptions {
                 interface: None,
                 dhcp_fail_delay: Duration::from_secs(45),
+                debug: false,
             })
         );
     }
@@ -171,6 +180,7 @@ mod tests {
 
         assert_eq!(options.interface.as_deref(), Some("eth0"));
         assert_eq!(options.dhcp_fail_delay, Duration::from_secs(90));
+        assert!(!options.debug);
         assert_eq!(
             options.service_args(),
             ["--interface", "eth0", "--dhcp-fail-delay-seconds", "90",]
@@ -181,6 +191,26 @@ mod tests {
     fn unknown_option_is_rejected() {
         let err = parse_args(["run", "--config", "/etc/miniboard-ipd.conf"]).unwrap_err();
         assert!(err.to_string().contains("unknown option --config"));
+    }
+
+    #[test]
+    fn debug_flag_is_embedded_in_service_args() {
+        let command = parse_args(["install", "--interface", "eth0", "--debug"]).unwrap();
+        let Command::Install(options) = command else {
+            panic!("expected install command");
+        };
+
+        assert!(options.debug);
+        assert_eq!(
+            options.service_args(),
+            [
+                "--interface",
+                "eth0",
+                "--dhcp-fail-delay-seconds",
+                "45",
+                "--debug",
+            ]
+        );
     }
 
     #[test]
