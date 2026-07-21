@@ -44,6 +44,8 @@ chmod +x ./MSU2.Flasher-linux-x64
 
 ### 2. 在 Linux 设备上安装 IP 显示服务
 
+Linux 内核需要编译进 CDC ACM 支持，以及对应平台的 USB host 驱动。DEVTMPFS 也推荐编译进去，要不不能自动创建还挺费劲的。
+
 默认安装后显示文字 IPv4 地址， 因为我老花眼了，所以故意把 IP 分了两行显示让字大一点：
 
 ```sh
