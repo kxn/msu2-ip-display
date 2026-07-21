@@ -152,7 +152,7 @@ jobs:
       - name: Build portable executable
         if: matrix.kind == 'portable'
         working-directory: flasher/src-tauri
-        run: cargo build --release
+        run: cargo build --release --features custom-protocol
 
       - name: Package Windows portable executable
         if: matrix.name == 'windows-x64'
