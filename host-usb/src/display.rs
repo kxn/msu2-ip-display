@@ -45,14 +45,26 @@ const RGB565_TEXT: u16 = 0x5fd0;
 const RGB565_BLACK: u16 = 0x0000;
 const KEEPALIVE_X: u16 = SCREEN_WIDTH - 1;
 const KEEPALIVE_Y: u16 = SCREEN_HEIGHT - 1;
+const ACQUIRING_RGB565BE: &[u8] =
+    include_bytes!("../../flasher/src-tauri/assets/acquiring.rgb565be");
+const DHCP_FAILED_RGB565BE: &[u8] =
+    include_bytes!("../../flasher/src-tauri/assets/dhcp_failed.rgb565be");
 
 impl DisplayRenderer {
     pub fn pending() -> Vec<WireWrite> {
         full_screen_page(PENDING_PAGE)
     }
 
+    pub fn pending_runtime() -> Vec<WireWrite> {
+        lcd_region_writes(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, ACQUIRING_RGB565BE)
+    }
+
     pub fn dhcp_failed() -> Vec<WireWrite> {
         full_screen_page(DHCP_FAILED_PAGE)
+    }
+
+    pub fn dhcp_failed_runtime() -> Vec<WireWrite> {
+        lcd_region_writes(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, DHCP_FAILED_RGB565BE)
     }
 
     pub fn ip(ip: Ipv4Addr) -> Vec<WireWrite> {
@@ -298,6 +310,22 @@ mod tests {
             dhcp_failed[2].bytes,
             show_photo_packet(DHCP_FAILED_PAGE).to_vec()
         );
+    }
+
+    #[test]
+    fn runtime_status_screens_direct_write_full_screen_images() {
+        let pending = DisplayRenderer::pending_runtime();
+        let failed = DisplayRenderer::dhcp_failed_runtime();
+
+        for writes in [&pending, &failed] {
+            assert_eq!(writes[0].bytes, set_xy_packet(0, 0).to_vec());
+            assert_eq!(
+                writes[1].bytes,
+                set_size_packet(SCREEN_WIDTH, SCREEN_HEIGHT).to_vec()
+            );
+            assert_eq!(writes[2].bytes, load_lcd_address_packet().to_vec());
+            assert_eq!(writes.len(), 103);
+        }
     }
 
     #[test]

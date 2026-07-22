@@ -1,7 +1,7 @@
 use std::io;
 use std::time::{Duration, Instant};
 
-use crate::cli::{DisplayMode, RunOptions};
+use crate::cli::{DisplayMode, ResourceMode, RunOptions};
 use crate::daemon::{Daemon, DaemonAction, DaemonEvent, DaemonState};
 use crate::device_scan::TtyDevice;
 use crate::display::{DisplayRenderer, WireWrite};
@@ -28,6 +28,7 @@ pub struct Runtime<T> {
     daemon: Daemon,
     io: T,
     display_mode: DisplayMode,
+    resource_mode: ResourceMode,
     connected: bool,
     last_keepalive: Instant,
     last_network_snapshot: Instant,
@@ -43,10 +44,12 @@ impl<T: RuntimeIo> Runtime<T> {
     pub fn new(options: RunOptions, io: T) -> Self {
         let now = io.now();
         let display_mode = options.show.clone();
+        let resource_mode = options.resources;
         Self {
             daemon: Daemon::new(options),
             io,
             display_mode,
+            resource_mode,
             connected: false,
             last_keepalive: now,
             last_network_snapshot: now,
@@ -216,13 +219,21 @@ impl<T: RuntimeIo> Runtime<T> {
                 Ok(())
             }
             DaemonAction::ShowPending => {
-                self.io.send_writes(&DisplayRenderer::pending())?;
+                let writes = match self.resource_mode {
+                    ResourceMode::Flashed => DisplayRenderer::pending(),
+                    ResourceMode::Unflashed => DisplayRenderer::pending_runtime(),
+                };
+                self.io.send_writes(&writes)?;
                 self.keepalive_pixel = KeepalivePixel::Black;
                 self.timeout_counter.record_success();
                 Ok(())
             }
             DaemonAction::ShowDhcpFailed => {
-                self.io.send_writes(&DisplayRenderer::dhcp_failed())?;
+                let writes = match self.resource_mode {
+                    ResourceMode::Flashed => DisplayRenderer::dhcp_failed(),
+                    ResourceMode::Unflashed => DisplayRenderer::dhcp_failed_runtime(),
+                };
+                self.io.send_writes(&writes)?;
                 self.keepalive_pixel = KeepalivePixel::Black;
                 self.timeout_counter.record_success();
                 Ok(())
@@ -566,8 +577,12 @@ mod tests {
         fn send_writes(&mut self, writes: &[WireWrite]) -> io::Result<()> {
             let marker = if writes == DisplayRenderer::pending() {
                 "pending"
+            } else if writes == DisplayRenderer::pending_runtime() {
+                "pending_runtime"
             } else if writes == DisplayRenderer::dhcp_failed() {
                 "dhcp_failed"
+            } else if writes == DisplayRenderer::dhcp_failed_runtime() {
+                "dhcp_failed_runtime"
             } else if is_qr_writes(writes) {
                 "qr"
             } else if writes == DisplayRenderer::keepalive_white() {
@@ -669,6 +684,92 @@ mod tests {
                 "sleep:500",
             ]
         );
+    }
+
+    #[test]
+    fn unflashed_mode_direct_writes_pending_status_on_connect() {
+        let start = Instant::now();
+        let mut options = options();
+        options.resources = ResourceMode::Unflashed;
+        let io = FakeIo {
+            now: Cell::new(Some(start)),
+            devices: vec![target_device()],
+            snapshot_results: VecDeque::from([Ok(Some(NetworkSnapshot::default()))]),
+            ..FakeIo::default()
+        };
+        let mut runtime = Runtime::new(options, io);
+
+        runtime.tick().unwrap();
+
+        assert!(runtime
+            .io
+            .events
+            .iter()
+            .any(|event| event == "writes:pending_runtime"));
+        assert!(!runtime
+            .io
+            .events
+            .iter()
+            .any(|event| event == "writes:pending"));
+    }
+
+    #[test]
+    fn unflashed_mode_direct_writes_dhcp_failed_status() {
+        let start = Instant::now();
+        let mut options = options();
+        options.resources = ResourceMode::Unflashed;
+        let link_local = NetworkSnapshot {
+            addresses: vec![AddressCandidate {
+                interface: "eth0".to_string(),
+                address: Ipv4Addr::new(169, 254, 1, 2),
+                is_dynamic: true,
+                is_up: true,
+                is_lower_up: true,
+            }],
+            routes: vec![],
+        };
+        let io = FakeIo {
+            now: Cell::new(Some(start)),
+            devices: vec![target_device()],
+            snapshot_results: VecDeque::from([Ok(Some(link_local.clone())), Ok(Some(link_local))]),
+            ..FakeIo::default()
+        };
+        let mut runtime = Runtime::new(options, io);
+
+        runtime.tick().unwrap();
+        runtime.io.set_now(start + Duration::from_secs(45));
+        runtime.tick().unwrap();
+
+        assert!(runtime
+            .io
+            .events
+            .iter()
+            .any(|event| event == "writes:dhcp_failed_runtime"));
+    }
+
+    #[test]
+    fn flashed_mode_keeps_page_based_pending_status() {
+        let start = Instant::now();
+        let io = FakeIo {
+            now: Cell::new(Some(start)),
+            devices: vec![target_device()],
+            snapshot_results: VecDeque::from([Ok(Some(NetworkSnapshot::default()))]),
+            ..FakeIo::default()
+        };
+        let mut runtime = Runtime::new(options(), io);
+
+        runtime.tick().unwrap();
+
+        assert!(runtime
+            .io
+            .events
+            .iter()
+            .any(|event| event == "writes:pending"));
+        assert!(!runtime
+            .io
+            .events
+            .iter()
+            .any(|event| event == "writes:pending_runtime"));
     }
 
     #[test]
