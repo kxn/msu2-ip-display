@@ -54,6 +54,14 @@ curl -fsSL https://raw.githubusercontent.com/kxn/msu2-ip-display/master/scripts/
 
 安装命令会注册并尽量启用服务，但不会立刻启动它。进入目标系统后按安装输出里的提示手动启动服务，再插入已经刷好的 MSU2 MINI。设备拿到 IP 后，屏幕会直接显示 IPv4。
 
+如果手里的板子还没有刷入本项目资源，安装时加 `--unflashed`：
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/kxn/msu2-ip-display/master/scripts/install-miniboard-ipd.sh | sudo sh -s -- --unflashed
+```
+
+这个模式不会改写小屏 flash。host 端还没连上时，小屏会保持出厂默认状态；host 连上后，获取 IP 中和 DHCP 失败状态会由 host 直接写屏。文字 IP 使用官方保留页里的数字 glyph，并在运行时画边框，所以状态切换会比刷过资源的默认模式慢一点。
+
 ## 显示二维码
 
 不想还费劲输入的，可以让显示的时候不显示文字 IP 而是显示一个二维码，这样就可以用手机扫码来快速完成应用配置。默认 --show qr 会显示一个 'http://{ip}' 的二维码

@@ -172,6 +172,31 @@ test_installs_matching_arch_and_registers_service() {
   assert_contains "Start it manually after booting the target system." "$tmp/out"
 }
 
+test_unflashed_option_is_passed_to_service_install() {
+  tmp=$(run_in_temp unflashed)
+  fixture_dir=$tmp/fixtures
+  fakebin=$tmp/fakebin
+  install_root=$tmp/root
+  log=$tmp/install.log
+  curl_log=$tmp/curl.log
+  mkdir -p "$fixture_dir"
+  make_fixture linux-amd64 "$fixture_dir"
+  make_fake_curl "$fakebin" "$fixture_dir"
+  : > "$log"
+  : > "$curl_log"
+
+  PATH="$fakebin:$PATH" \
+  MSU2_INSTALL_ROOT="$install_root" \
+  MSU2_INSTALLER_ARCH=x86_64 \
+  FAKE_LATEST_TAG=v0.0.0 \
+  MSU2_RELEASE_BASE=https://example.invalid/releases/latest/download \
+  INSTALL_LOG="$log" \
+  CURL_LOG="$curl_log" \
+    sh "$INSTALLER" --unflashed --interface eth0 > "$tmp/out"
+
+  assert_contains "$install_root/usr/local/bin/miniboard-ipd install --unflashed --interface eth0" "$log"
+}
+
 test_no_service_only_installs_binary() {
   tmp=$(run_in_temp no-service)
   fixture_dir=$tmp/fixtures
@@ -342,6 +367,7 @@ CURL
 }
 
 test_installs_matching_arch_and_registers_service
+test_unflashed_option_is_passed_to_service_install
 test_no_service_only_installs_binary
 test_replaces_busy_existing_binary_without_direct_copy_to_install_path
 test_upgrade_stops_existing_service_before_replacing_binary

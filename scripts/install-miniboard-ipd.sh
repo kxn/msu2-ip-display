@@ -13,6 +13,7 @@ Install miniboard-ipd for the current Linux architecture.
 Usage:
   curl -fsSL https://raw.githubusercontent.com/kxn/msu2-ip-display/master/scripts/install-miniboard-ipd.sh | sudo sh
   curl -fsSL https://raw.githubusercontent.com/kxn/msu2-ip-display/master/scripts/install-miniboard-ipd.sh | sudo sh -s -- --interface eth0
+  curl -fsSL https://raw.githubusercontent.com/kxn/msu2-ip-display/master/scripts/install-miniboard-ipd.sh | sudo sh -s -- --unflashed
   curl -fsSL https://raw.githubusercontent.com/kxn/msu2-ip-display/master/scripts/install-miniboard-ipd.sh | sudo sh -s -- --debug
   curl -fsSL https://raw.githubusercontent.com/kxn/msu2-ip-display/master/scripts/install-miniboard-ipd.sh | sudo sh -s -- --no-service
 
@@ -21,6 +22,7 @@ Installer options:
   --help          Show this help.
 
 Any remaining arguments are passed to: miniboard-ipd install ...
+Host options such as --interface, --show, --debug, and --unflashed are passed through.
 The service is installed and enabled when supported, but it is not started automatically.
 USAGE
 }

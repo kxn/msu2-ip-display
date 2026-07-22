@@ -35,6 +35,14 @@ To bind the installed service to a fixed network interface:
 curl -fsSL https://raw.githubusercontent.com/kxn/msu2-ip-display/master/scripts/install-miniboard-ipd.sh | sudo sh -s -- --interface eth0
 ```
 
+For boards that have not been flashed with this project's resources, opt into runtime status rendering:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/kxn/msu2-ip-display/master/scripts/install-miniboard-ipd.sh | sudo sh -s -- --unflashed
+```
+
+`--unflashed` does not write the screen flash. Before the host connects, the board keeps its factory default state. After the host connects, acquiring-IP and DHCP-failed status screens are direct-written by the host. Text IP rendering uses the official reserved digit glyph pages plus runtime border drawing, so status transitions can be slower than the default flashed-resource mode.
+
 For field diagnostics, enable detailed daemon logging:
 
 ```sh

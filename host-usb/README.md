@@ -12,6 +12,7 @@
 ```bash
 miniboard-ipd run
 miniboard-ipd run --interface eth0
+miniboard-ipd run --unflashed
 miniboard-ipd run --debug
 miniboard-ipd run --show qr
 miniboard-ipd run --show 'qr:http://{ip}/'
@@ -38,6 +39,14 @@ miniboard-ipd --help
 ```bash
 curl -fsSL https://raw.githubusercontent.com/kxn/msu2-ip-display/master/scripts/install-miniboard-ipd.sh | sudo sh
 ```
+
+未提前用 flasher 刷入本项目资源的板子，可以安装时启用 `--unflashed`：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/kxn/msu2-ip-display/master/scripts/install-miniboard-ipd.sh | sudo sh -s -- --unflashed
+```
+
+这个模式不会改写小屏 flash。host 端还没连上时，小屏保持出厂默认状态；host 连上后，获取 IP 中和 DHCP 失败状态由 host 直接写屏。文字 IP 使用官方保留页里的数字 glyph，并在运行时画边框，所以状态切换会比刷过资源的默认模式慢一点。
 
 传给 `sh -s --` 后面的参数会固化进生成的 service/init 脚本：
 
@@ -78,4 +87,4 @@ cargo test
 cargo build --release
 ```
 
-`install` 会把命令行选项，包括 `--debug` 和 `--show`，写入生成的 service/init 启动命令。v1 不读取配置文件。
+`install` 会把命令行选项，包括 `--debug`、`--show` 和 `--unflashed`，写入生成的 service/init 启动命令。v1 不读取配置文件。
