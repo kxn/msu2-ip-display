@@ -21,6 +21,7 @@ Installer options:
   --help          Show this help.
 
 Any remaining arguments are passed to: miniboard-ipd install ...
+The service is installed and enabled when supported, but it is not started automatically.
 USAGE
 }
 

@@ -50,6 +50,9 @@ The installer:
 3. Downloads and verifies the matching `.sha256` file.
 4. Installs the binary to `/usr/local/bin/miniboard-ipd`.
 5. Runs `miniboard-ipd install "$@"` unless `--no-service` is passed.
+6. Verifies the installed binary version and prints the manual start command.
+
+`miniboard-ipd install` installs service files and enables boot start when the init system supports it, but it does not start or restart the service. This keeps the installer usable when preparing an embedded root filesystem from a chroot. Start the service manually after booting the target system.
 
 Supported architecture mappings:
 

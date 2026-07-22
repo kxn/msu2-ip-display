@@ -33,6 +33,10 @@ if [ "\${1:-}" = "--version" ] || [ "\${1:-}" = "version" ]; then
   exit 0
 fi
 echo "\$0 \$*" >> "\$INSTALL_LOG"
+if [ "\${1:-}" = "install" ]; then
+  echo "Service was installed but not started."
+  echo "Start it manually after booting the target system."
+fi
 BIN
   chmod +x "$package_dir/miniboard-ipd"
 
@@ -157,13 +161,15 @@ test_installs_matching_arch_and_registers_service() {
   MSU2_RELEASE_BASE=https://example.invalid/releases/latest/download \
   INSTALL_LOG="$log" \
   CURL_LOG="$curl_log" \
-    sh "$INSTALLER" --interface eth0 --dhcp-fail-delay-seconds 45
+    sh "$INSTALLER" --interface eth0 --dhcp-fail-delay-seconds 45 > "$tmp/out"
 
   installed=$install_root/usr/local/bin/miniboard-ipd
   assert_file "$installed"
   assert_contains "miniboard-ipd-linux-amd64.tar.gz" "$curl_log"
   assert_contains "miniboard-ipd-linux-amd64.tar.gz.sha256" "$curl_log"
   assert_contains "$installed install --interface eth0 --dhcp-fail-delay-seconds 45" "$log"
+  assert_contains "Service was installed but not started." "$tmp/out"
+  assert_contains "Start it manually after booting the target system." "$tmp/out"
 }
 
 test_no_service_only_installs_binary() {
@@ -250,10 +256,11 @@ OLD
   MSU2_RELEASE_BASE=https://example.invalid/releases/latest/download \
   INSTALL_LOG="$log" \
   CURL_LOG="$curl_log" \
-    sh "$INSTALLER" --interface eth0
+    sh "$INSTALLER" --interface eth0 > "$tmp/out"
 
   assert_contains "old:$installed uninstall" "$log"
   assert_contains "$installed install --interface eth0" "$log"
+  assert_contains "Service was installed but not started." "$tmp/out"
 }
 
 test_resolves_latest_release_and_verifies_installed_version() {

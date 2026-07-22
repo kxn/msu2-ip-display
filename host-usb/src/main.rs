@@ -16,10 +16,10 @@ const INSTALLED_BINARY: &str = "/usr/local/bin/miniboard-ipd";
 
 #[cfg(target_os = "linux")]
 fn real_main() -> std::io::Result<()> {
-    use miniboard_ipd::cli::{parse_args, Command};
+    use miniboard_ipd::cli::{help_text, parse_args, Command};
     use miniboard_ipd::service_install::{
-        apply_install, apply_uninstall, detect_init, run_status, InstallRequest, InstallSpec,
-        RealInstallOps,
+        apply_install, apply_uninstall, detect_init, run_status, start_command, InstallRequest,
+        InstallSpec, RealInstallOps,
     };
 
     let command = parse_args(std::env::args().skip(1))
@@ -48,6 +48,12 @@ fn real_main() -> std::io::Result<()> {
             };
             let mut ops = RealInstallOps;
             apply_install(&request, &mut ops)?;
+            println!("Service was installed but not started.");
+            if let Some(command) = start_command(request.init) {
+                println!("Start it manually with: {}", command.join(" "));
+            } else {
+                println!("Start it manually after booting the target system.");
+            }
         }
         Command::Uninstall => {
             let mut ops = RealInstallOps;
@@ -59,6 +65,9 @@ fn real_main() -> std::io::Result<()> {
         }
         Command::Version => {
             println!("{}", miniboard_ipd::cli::version_string());
+        }
+        Command::Help => {
+            print!("{}", help_text());
         }
     }
 

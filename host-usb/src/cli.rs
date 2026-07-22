@@ -8,6 +8,7 @@ pub enum Command {
     Uninstall,
     Status,
     Version,
+    Help,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -44,19 +45,59 @@ where
             "expected command: run, install, uninstall, status, version".to_string(),
         ));
     };
+    let remaining: Vec<String> = args.collect();
 
     match command.as_str() {
-        "run" => parse_run_options(args).map(Command::Run),
-        "install" => parse_run_options(args).map(Command::Install),
-        "uninstall" => reject_extra("uninstall", args).map(|_| Command::Uninstall),
-        "status" => reject_extra("status", args).map(|_| Command::Status),
-        "version" | "--version" => reject_extra(&command, args).map(|_| Command::Version),
+        "run" if is_help_request(&remaining) => Ok(Command::Help),
+        "run" => parse_run_options(remaining.into_iter()).map(Command::Run),
+        "install" if is_help_request(&remaining) => Ok(Command::Help),
+        "install" => parse_run_options(remaining.into_iter()).map(Command::Install),
+        "uninstall" => reject_extra("uninstall", remaining.into_iter()).map(|_| Command::Uninstall),
+        "status" => reject_extra("status", remaining.into_iter()).map(|_| Command::Status),
+        "version" | "--version" => {
+            reject_extra(&command, remaining.into_iter()).map(|_| Command::Version)
+        }
+        "help" | "--help" | "-h" => {
+            reject_extra(&command, remaining.into_iter()).map(|_| Command::Help)
+        }
         other => Err(CliError(format!("unknown command {other}"))),
     }
 }
 
 pub fn version_string() -> String {
     format!("miniboard-ipd {}", env!("CARGO_PKG_VERSION"))
+}
+
+fn is_help_request(args: &[String]) -> bool {
+    matches!(args, [arg] if arg == "--help" || arg == "-h")
+}
+
+pub fn help_text() -> &'static str {
+    "miniboard-ipd - display this Linux host IPv4 address on an MSU2 MINI USB screen
+
+Usage:
+  miniboard-ipd run [options]
+  miniboard-ipd install [options]
+  miniboard-ipd uninstall
+  miniboard-ipd status
+  miniboard-ipd version
+  miniboard-ipd --help
+
+Commands:
+  run        Run the daemon in the foreground.
+  install    Install service files and enable boot start. Does not start the service.
+  uninstall  Stop and remove the installed service and binary.
+  status     Show service status.
+  version    Show the installed version.
+
+Options for run/install:
+  --interface <name>                 Use a specific Linux network interface.
+  --dhcp-fail-delay-seconds <secs>   Delay before showing DHCP failure. Default: 45.
+  --show ip                          Display the host IP as text. Default.
+  --show qr                          Display the host IP as a QR code using http://{ip}/.
+  --show qr:<template>               Display a QR code using a template containing {ip}.
+  --debug                            Enable debug logging.
+"
 }
 
 impl RunOptions {
@@ -354,6 +395,27 @@ mod tests {
             version_string(),
             format!("miniboard-ipd {}", env!("CARGO_PKG_VERSION"))
         );
+    }
+
+    #[test]
+    fn help_commands_parse_without_options() {
+        assert!(parse_args(["--help"]).is_ok());
+        assert!(parse_args(["-h"]).is_ok());
+        assert!(parse_args(["help"]).is_ok());
+        assert!(parse_args(["run", "--help"]).is_ok());
+        assert!(parse_args(["install", "-h"]).is_ok());
+    }
+
+    #[test]
+    fn help_text_lists_commands_and_common_options() {
+        let help = help_text();
+
+        assert!(help.contains("Usage:"));
+        assert!(help.contains("miniboard-ipd run [options]"));
+        assert!(help.contains("run"));
+        assert!(help.contains("install"));
+        assert!(help.contains("--interface"));
+        assert!(help.contains("--show"));
     }
 }
 

@@ -18,6 +18,7 @@ miniboard-ipd run --show 'qr:http://{ip}/'
 miniboard-ipd install --interface eth0 --dhcp-fail-delay-seconds 45
 miniboard-ipd uninstall
 miniboard-ipd status
+miniboard-ipd --help
 ```
 
 `--show` 控制拿到 IP 后的显示方式：
@@ -32,6 +33,7 @@ miniboard-ipd status
 ## 一行安装
 
 安装脚本会下载当前 Linux 架构匹配的 GitHub Release 产物，校验 SHA-256，把 `miniboard-ipd` 安装到 `/usr/local/bin`，然后执行 `miniboard-ipd install ...` 注册服务。
+`install` 会写入服务文件，并在 init 系统支持时启用开机启动，但不会立刻启动或重启服务。这样在 chroot 里准备嵌入式 rootfs 时不会因为启动服务失败而中断；进入目标系统后按输出提示手动启动服务。
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/kxn/msu2-ip-display/master/scripts/install-miniboard-ipd.sh | sudo sh
