@@ -28,7 +28,7 @@ cargo test
 3. `Ready` 状态由后端 display worker 持有串口，每 `800ms` 写一个 `1x1` 黑色像素作为 keepalive，防止固件回到离线动图。
 4. `Ready` 或 `Done` 状态下，如果同一个端口仍在枚举列表中，扫描只返回后端状态快照，不再重复打开串口握手。
 5. 点击写入时先停止 display worker 并等待串口释放，再进入 `Flashing` 状态，校验内置资产长度并写入固定页面。
-6. 写入 8 个资源：两帧离线动图、离线静图、获取中状态图、DHCP 失败状态图、IP 背景、启动 logo、资源目录页，共 `607` 页。
+6. 写入 7 个资源：两帧离线动图、离线静图、获取中状态图、DHCP 失败状态图、启动 logo、资源目录页，共 `507` 页。host 文字 IP 背景不再写入 Flash，改由 host 运行时 RAM show 和直接画边框完成。
 7. 写入完成后进入 `Done` 状态，整屏显示 `写入完成` 并继续用 `1x1` 像素 keepalive 保持画面；正常流程不再自动预览 page `0`。
 8. 写入失败进入 `Error` 状态，PC UI 显示错误；下一次扫描如果设备仍在，会重新显示 `等待写入` 并恢复 `Ready`。
 
@@ -43,7 +43,6 @@ cargo test
 | 离线静图 | `200..299` |
 | 获取 IP 中 | `300..399` |
 | DHCP 失败 | `400..499` |
-| IP 背景 | `500..599` |
 | 启动 logo | `3820..3825` |
 | 资源目录 | `4094` |
 
@@ -62,7 +61,7 @@ flasher 不再写入 `flasher/src-tauri/assets/offline_animation.rgb565be`，也
 - 进度到 `page=3800/3800`
 - 输出 `DONE`
 
-上述日志来自旧布局实机验证；当前紧凑写入计划为 `assets=8 pages=607`。
+上述日志来自旧布局实机验证；当前紧凑写入计划为 `assets=7 pages=507`。
 
 `references/artifacts/logs/task8-page0-preview-verify.log` 显示最后 page 0 预览命令：
 

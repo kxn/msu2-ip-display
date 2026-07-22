@@ -114,7 +114,7 @@ impl<T: RuntimeIo> Runtime<T> {
             if let Err(err) = self.apply_action(&action) {
                 return self.handle_runtime_error("display retry", err, true);
             }
-            log_display_action(&action, DisplayActionLog::Refresh);
+            log_display_action(&action, DisplayActionLog::Refresh, self.resource_mode);
             self.pending_display_action = None;
             let now = self.io.now();
             self.last_keepalive = now;
@@ -200,7 +200,7 @@ impl<T: RuntimeIo> Runtime<T> {
         }
         self.apply_action(&action)?;
         if is_display_action {
-            log_display_action(&action, log);
+            log_display_action(&action, log, self.resource_mode);
             self.pending_display_action = None;
             let now = self.io.now();
             self.last_keepalive = now;
@@ -373,16 +373,24 @@ enum KeepalivePixel {
     White,
 }
 
-fn log_display_action(action: &DaemonAction, mode: DisplayActionLog) {
+fn log_display_action(action: &DaemonAction, mode: DisplayActionLog, resource_mode: ResourceMode) {
     let prefix = match mode {
         DisplayActionLog::StateChange => "display",
         DisplayActionLog::Refresh => "refresh display",
     };
     match action {
-        DaemonAction::ShowPending => crate::logging::info(&format!("{prefix}: pending IP page")),
-        DaemonAction::ShowDhcpFailed => {
-            crate::logging::info(&format!("{prefix}: DHCP failed page"))
-        }
+        DaemonAction::ShowPending => match resource_mode {
+            ResourceMode::Flashed => crate::logging::info(&format!("{prefix}: pending IP page")),
+            ResourceMode::Unflashed => {
+                crate::logging::info(&format!("{prefix}: pending IP direct write"))
+            }
+        },
+        DaemonAction::ShowDhcpFailed => match resource_mode {
+            ResourceMode::Flashed => crate::logging::info(&format!("{prefix}: DHCP failed page")),
+            ResourceMode::Unflashed => {
+                crate::logging::info(&format!("{prefix}: DHCP failed direct write"))
+            }
+        },
         DaemonAction::ShowIp(ip) => crate::logging::info(&format!("{prefix}: IP {ip}")),
         DaemonAction::OpenDevice | DaemonAction::CloseDevice => {}
     }
