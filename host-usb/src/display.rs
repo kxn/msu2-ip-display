@@ -1,9 +1,9 @@
 use std::net::Ipv4Addr;
 
 use crate::protocol::{
-    add_ram_masked_packet, load_lcd_address_packet, load_ram_mix_show_packet, ram_init_packet,
+    add_ram_masked_packet, load_lcd_address_packet, load_ram_show_packet, ram_init_packet,
     set_color_packet, set_size_packet, set_xy_packet, show_photo_packet, write_lcd_data_packet,
-    DHCP_FAILED_PAGE, DIGIT_RESOURCE_PAGE, IP_BACKGROUND_PAGE, PENDING_PAGE,
+    DHCP_FAILED_PAGE, DIGIT_RESOURCE_PAGE, PENDING_PAGE,
 };
 use crate::qr_display::{render_qr_rgb565be, QR_WHITE};
 
@@ -56,10 +56,7 @@ impl DisplayRenderer {
     }
 
     pub fn ip(ip: Ipv4Addr) -> Vec<WireWrite> {
-        let mut writes = vec![
-            packet(show_photo_packet(IP_BACKGROUND_PAGE), false),
-            packet(ram_init_packet(0), false),
-        ];
+        let mut writes = vec![packet(ram_init_packet(0), false)];
 
         let layout = Self::layout_ip(ip);
         for glyph in layout.digits {
@@ -70,11 +67,12 @@ impl DisplayRenderer {
         }
 
         writes.push(packet(set_color_packet(RGB565_TEXT, RGB565_BLACK), false));
-        writes.push(packet(load_ram_mix_show_packet(IP_BACKGROUND_PAGE), false));
+        writes.push(packet(load_ram_show_packet(), false));
 
         for dot in layout.dots {
             writes.extend(dot_writes(dot));
         }
+        writes.extend(border_writes());
 
         writes
     }
@@ -201,6 +199,51 @@ fn dot_writes(dot: DotGlyph) -> Vec<WireWrite> {
     ]
 }
 
+fn border_writes() -> Vec<WireWrite> {
+    const SEGMENTS: &[(u16, u16, u16, u16)] = &[
+        (1, 1, 158, 1),
+        (1, 78, 158, 78),
+        (1, 1, 1, 78),
+        (158, 1, 158, 78),
+        (8, 2, 28, 2),
+        (3, 8, 3, 24),
+        (131, 2, 151, 2),
+        (156, 8, 156, 24),
+        (8, 77, 28, 77),
+        (3, 55, 3, 71),
+        (131, 77, 151, 77),
+        (156, 55, 156, 71),
+    ];
+
+    let mut writes = Vec::new();
+    for &(x0, y0, x1, y1) in SEGMENTS {
+        writes.extend(line_writes(x0, y0, x1, y1, RGB565_TEXT));
+    }
+    writes
+}
+
+fn line_writes(x0: u16, y0: u16, x1: u16, y1: u16, color: u16) -> Vec<WireWrite> {
+    if y0 == y1 {
+        let x = x0.min(x1);
+        let width = x0.abs_diff(x1) + 1;
+        filled_region_writes(x, y0, width, 1, color)
+    } else if x0 == x1 {
+        let y = y0.min(y1);
+        let height = y0.abs_diff(y1) + 1;
+        filled_region_writes(x0, y, 1, height, color)
+    } else {
+        panic!("runtime border only supports horizontal or vertical segments");
+    }
+}
+
+fn filled_region_writes(x: u16, y: u16, width: u16, height: u16, color: u16) -> Vec<WireWrite> {
+    let mut bytes = vec![0u8; width as usize * height as usize * 2];
+    for pixel in bytes.chunks_exact_mut(2) {
+        pixel.copy_from_slice(&color.to_be_bytes());
+    }
+    lcd_region_writes(x, y, width, height, &bytes)
+}
+
 fn pixel_writes(x: u16, y: u16, color: u16) -> Vec<WireWrite> {
     let mut pixel_bytes = [0u8; 256];
     pixel_bytes[0..2].copy_from_slice(&color.to_be_bytes());
@@ -219,6 +262,7 @@ fn pixel_writes(x: u16, y: u16, color: u16) -> Vec<WireWrite> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::protocol::{load_ram_mix_show_packet, load_ram_show_packet, IP_BACKGROUND_PAGE};
 
     #[test]
     fn page_state_commands_show_expected_pages() {
@@ -301,18 +345,48 @@ mod tests {
     }
 
     #[test]
-    fn ip_render_starts_with_background_and_loads_ram_mix() {
+    fn ip_render_uses_runtime_ram_show_instead_of_flash_background() {
         let writes = DisplayRenderer::ip(Ipv4Addr::new(192, 168, 1, 204));
-        assert_eq!(
-            writes[0].bytes,
-            show_photo_packet(IP_BACKGROUND_PAGE).to_vec()
-        );
+
+        assert!(!writes
+            .iter()
+            .any(|write| write.bytes == show_photo_packet(IP_BACKGROUND_PAGE).to_vec()));
+        assert!(!writes
+            .iter()
+            .any(|write| write.bytes == load_ram_mix_show_packet(IP_BACKGROUND_PAGE).to_vec()));
         assert!(writes
             .iter()
-            .any(|write| write.bytes == [0x02, 0x03, 0x0d, 0x00, 0x00, 0x00]));
+            .any(|write| write.bytes == ram_init_packet(0).to_vec()));
         assert!(writes
             .iter()
-            .any(|write| write.bytes == [0x02, 0x03, 0x11, 0x01, 0xf4, 0x00]));
+            .any(|write| write.bytes == load_ram_show_packet().to_vec()));
+    }
+
+    #[test]
+    fn ip_render_draws_dots_and_border_after_ram_show() {
+        let writes = DisplayRenderer::ip(Ipv4Addr::new(10, 0, 1, 5));
+        let ram_show_index = writes
+            .iter()
+            .position(|write| write.bytes == load_ram_show_packet().to_vec())
+            .expect("expected LCD_Load_RAM_Show packet");
+        let first_direct_lcd_after_ram_show = writes
+            .iter()
+            .enumerate()
+            .skip(ram_show_index + 1)
+            .find_map(|(index, write)| {
+                (write.bytes == load_lcd_address_packet().to_vec()).then_some(index)
+            })
+            .expect("expected direct LCD writes after RAM show");
+
+        assert!(first_direct_lcd_after_ram_show > ram_show_index);
+        assert!(writes
+            .iter()
+            .skip(ram_show_index + 1)
+            .any(|write| write.bytes == set_xy_packet(1, 1).to_vec()));
+        assert!(writes
+            .iter()
+            .skip(ram_show_index + 1)
+            .any(|write| write.bytes == set_xy_packet(158, 1).to_vec()));
     }
 
     #[test]

@@ -520,8 +520,8 @@ mod tests {
     use crate::display::DisplayRenderer;
     use crate::ip_detect::{AddressCandidate, Route};
     use crate::protocol::{
-        load_lcd_address_packet, set_size_packet, set_xy_packet, show_photo_packet,
-        IP_BACKGROUND_PAGE, SCREEN_HEIGHT, SCREEN_WIDTH,
+        load_lcd_address_packet, load_ram_show_packet, set_size_packet, set_xy_packet,
+        SCREEN_HEIGHT, SCREEN_WIDTH,
     };
 
     #[derive(Default)]
@@ -573,8 +573,8 @@ mod tests {
             } else if writes == DisplayRenderer::keepalive_white() {
                 "keepalive_white"
             } else if writes
-                .first()
-                .is_some_and(|write| write.bytes == show_photo_packet(IP_BACKGROUND_PAGE))
+                .iter()
+                .any(|write| write.bytes == load_ram_show_packet().to_vec())
             {
                 "ip"
             } else {
