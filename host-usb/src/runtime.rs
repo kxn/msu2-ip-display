@@ -516,6 +516,7 @@ mod tests {
     use std::net::Ipv4Addr;
     use std::path::PathBuf;
 
+    use crate::cli::ResourceMode;
     use crate::display::DisplayRenderer;
     use crate::ip_detect::{AddressCandidate, Route};
     use crate::protocol::{
@@ -603,6 +604,7 @@ mod tests {
         RunOptions {
             interface: None,
             dhcp_fail_delay: Duration::from_secs(45),
+            resources: ResourceMode::Flashed,
             debug: false,
             show: DisplayMode::Text,
         }

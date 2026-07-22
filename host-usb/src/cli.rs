@@ -15,8 +15,15 @@ pub enum Command {
 pub struct RunOptions {
     pub interface: Option<String>,
     pub dhcp_fail_delay: Duration,
+    pub resources: ResourceMode,
     pub debug: bool,
     pub show: DisplayMode,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResourceMode {
+    Flashed,
+    Unflashed,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -93,6 +100,7 @@ Commands:
 Options for run/install:
   --interface <name>                 Use a specific Linux network interface.
   --dhcp-fail-delay-seconds <secs>   Delay before showing DHCP failure. Default: 45.
+  --unflashed                       Runtime-render status screens for boards without project resources.
   --show ip                          Display the host IP as text. Default.
   --show qr                          Display the host IP as a QR code using http://{ip}/.
   --show qr:<template>               Display a QR code using a template containing {ip}.
@@ -111,6 +119,9 @@ impl RunOptions {
         out.push(self.dhcp_fail_delay.as_secs().to_string());
         if self.debug {
             out.push("--debug".to_string());
+        }
+        if self.resources == ResourceMode::Unflashed {
+            out.push("--unflashed".to_string());
         }
         match &self.show {
             DisplayMode::Text => {}
@@ -148,6 +159,7 @@ where
     let mut options = RunOptions {
         interface: None,
         dhcp_fail_delay: Duration::from_secs(45),
+        resources: ResourceMode::Flashed,
         debug: false,
         show: DisplayMode::Text,
     };
@@ -181,6 +193,9 @@ where
             }
             "--debug" => {
                 options.debug = true;
+            }
+            "--unflashed" => {
+                options.resources = ResourceMode::Unflashed;
             }
             "--show" => {
                 let value = args
@@ -227,6 +242,7 @@ mod tests {
             Command::Run(RunOptions {
                 interface: None,
                 dhcp_fail_delay: Duration::from_secs(45),
+                resources: ResourceMode::Flashed,
                 debug: false,
                 show: DisplayMode::Text,
             })
@@ -241,6 +257,52 @@ mod tests {
         };
 
         assert_eq!(options.show, DisplayMode::Text);
+    }
+
+    #[test]
+    fn run_defaults_to_flashed_resources() {
+        let command = parse_args(["run"]).unwrap();
+        let Command::Run(options) = command else {
+            panic!("expected run command");
+        };
+
+        assert_eq!(options.resources, ResourceMode::Flashed);
+    }
+
+    #[test]
+    fn unflashed_resource_mode_is_parsed_and_embedded_in_service_args() {
+        let command = parse_args(["install", "--unflashed", "--interface", "eth0"]).unwrap();
+        let Command::Install(options) = command else {
+            panic!("expected install command");
+        };
+
+        assert_eq!(options.resources, ResourceMode::Unflashed);
+        assert_eq!(
+            options.service_args(),
+            [
+                "--interface",
+                "eth0",
+                "--dhcp-fail-delay-seconds",
+                "45",
+                "--unflashed",
+            ]
+        );
+    }
+
+    #[test]
+    fn unflashed_combines_with_qr_show_mode() {
+        let command = parse_args(["run", "--unflashed", "--show", "qr"]).unwrap();
+        let Command::Run(options) = command else {
+            panic!("expected run command");
+        };
+
+        assert_eq!(options.resources, ResourceMode::Unflashed);
+        assert_eq!(
+            options.show,
+            DisplayMode::Qr {
+                template: DEFAULT_QR_TEMPLATE.to_string()
+            }
+        );
     }
 
     #[test]
@@ -415,6 +477,7 @@ mod tests {
         assert!(help.contains("run"));
         assert!(help.contains("install"));
         assert!(help.contains("--interface"));
+        assert!(help.contains("--unflashed"));
         assert!(help.contains("--show"));
     }
 }

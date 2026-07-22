@@ -88,6 +88,10 @@ pub fn load_ram_mix_show_packet(background_page: u16) -> [u8; 6] {
     ]
 }
 
+pub fn load_ram_show_packet() -> [u8; 6] {
+    [0x02, 0x03, 0x10, 0x00, 0x00, 0x00]
+}
+
 pub fn load_lcd_address_packet() -> [u8; 6] {
     [0x02, 0x03, 0x07, 0x00, 0x00, 0x00]
 }
@@ -152,6 +156,11 @@ mod tests {
             load_ram_mix_show_packet(IP_BACKGROUND_PAGE),
             [0x02, 0x03, 0x11, 0x01, 0xf4, 0x00]
         );
+    }
+
+    #[test]
+    fn load_ram_show_packet_matches_official_demo() {
+        assert_eq!(load_ram_show_packet(), [0x02, 0x03, 0x10, 0x00, 0x00, 0x00]);
     }
 
     #[test]

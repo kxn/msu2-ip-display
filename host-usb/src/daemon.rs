@@ -124,7 +124,7 @@ fn is_connected(state: DaemonState) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cli::DisplayMode;
+    use crate::cli::{DisplayMode, ResourceMode};
     use crate::ip_detect::{AddressCandidate, Route};
     use std::time::Duration;
 
@@ -132,6 +132,7 @@ mod tests {
         RunOptions {
             interface: None,
             dhcp_fail_delay: Duration::from_secs(45),
+            resources: ResourceMode::Flashed,
             debug: false,
             show: DisplayMode::Text,
         }
