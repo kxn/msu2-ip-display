@@ -67,9 +67,9 @@ pub type FlashImage<'a> = FlashAsset<'a>;
 #[derive(Debug, Clone, Copy)]
 pub struct EmbeddedAssets {
     pub offline: &'static [u8],
+    pub offline_blank: &'static [u8],
     pub acquiring: &'static [u8],
     pub dhcp_failed: &'static [u8],
-    pub ip_bg: &'static [u8],
     pub startup_logo: &'static [u8],
     pub resource_directory: &'static [u8],
 }
@@ -77,9 +77,9 @@ pub struct EmbeddedAssets {
 pub fn embedded_assets() -> EmbeddedAssets {
     EmbeddedAssets {
         offline: include_bytes!("../assets/offline.rgb565be"),
+        offline_blank: include_bytes!("../assets/offline_blank.rgb565be"),
         acquiring: include_bytes!("../assets/acquiring.rgb565be"),
         dhcp_failed: include_bytes!("../assets/dhcp_failed.rgb565be"),
-        ip_bg: include_bytes!("../assets/ip_bg.rgb565be"),
         startup_logo: include_bytes!("../assets/mlogo_160x68.mono"),
         resource_directory: include_bytes!("../assets/resource_directory.bin"),
     }
@@ -119,7 +119,7 @@ pub fn fixed_flash_plan<'a>(assets: &'a EmbeddedAssets) -> Vec<FlashAsset<'a>> {
             label: "offline_blank",
             start_page: OFFLINE_BLANK_PAGE,
             page_count: RGB_IMAGE_PAGES,
-            bytes: assets.ip_bg,
+            bytes: assets.offline_blank,
         },
         FlashAsset {
             label: "offline_static",
@@ -138,12 +138,6 @@ pub fn fixed_flash_plan<'a>(assets: &'a EmbeddedAssets) -> Vec<FlashAsset<'a>> {
             start_page: HOST_DHCP_FAILED_PAGE,
             page_count: RGB_IMAGE_PAGES,
             bytes: assets.dhcp_failed,
-        },
-        FlashAsset {
-            label: "ip_bg",
-            start_page: HOST_IP_BG_PAGE,
-            page_count: RGB_IMAGE_PAGES,
-            bytes: assets.ip_bg,
         },
         FlashAsset {
             label: "startup_logo",
@@ -185,9 +179,9 @@ mod tests {
     fn embedded_assets_have_verified_size() {
         let assets = embedded_assets();
         assert_eq!(assets.offline.len(), RGB_IMAGE_BYTES);
+        assert_eq!(assets.offline_blank.len(), RGB_IMAGE_BYTES);
         assert_eq!(assets.acquiring.len(), RGB_IMAGE_BYTES);
         assert_eq!(assets.dhcp_failed.len(), RGB_IMAGE_BYTES);
-        assert_eq!(assets.ip_bg.len(), RGB_IMAGE_BYTES);
         assert_eq!(
             assets.startup_logo.len(),
             PAGE_BYTES * MONO_LOGO_PAGES as usize
@@ -265,7 +259,6 @@ mod tests {
                 "offline_static",
                 "pending",
                 "dhcp_failed",
-                "ip_bg",
                 "startup_logo",
                 "resource_directory",
             ]
@@ -275,9 +268,17 @@ mod tests {
         assert_eq!(plan[2].start_page, OFFLINE_STATIC_PAGE);
         assert_eq!(plan[3].start_page, HOST_PENDING_PAGE);
         assert_eq!(plan[4].start_page, HOST_DHCP_FAILED_PAGE);
-        assert_eq!(plan[5].start_page, HOST_IP_BG_PAGE);
-        assert_eq!(plan[6].start_page, STARTUP_LOGO_PAGE);
-        assert_eq!(plan[7].start_page, RESOURCE_DIRECTORY_PAGE);
+        assert_eq!(plan[5].start_page, STARTUP_LOGO_PAGE);
+        assert_eq!(plan[6].start_page, RESOURCE_DIRECTORY_PAGE);
+    }
+
+    #[test]
+    fn compact_plan_no_longer_writes_host_ip_background() {
+        let assets = embedded_assets();
+        let plan = fixed_flash_plan(&assets);
+
+        assert!(!plan.iter().any(|asset| asset.label == "ip_bg"));
+        assert!(!plan.iter().any(|asset| asset.start_page == HOST_IP_BG_PAGE));
     }
 
     #[test]

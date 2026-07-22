@@ -1,8 +1,7 @@
 use serde::Serialize;
 
 use crate::assets::{
-    validate_asset, FlashAsset, HOST_IP_BG_PAGE, HOST_PENDING_PAGE, OFFLINE_VISIBLE_PAGE,
-    PAGE_BYTES,
+    validate_asset, FlashAsset, HOST_PENDING_PAGE, OFFLINE_VISIBLE_PAGE, PAGE_BYTES,
 };
 use crate::device::PortIo;
 use crate::errors::{AppError, AppResult};
@@ -232,7 +231,6 @@ pub fn preview_pages<P: PortIo>(port: &mut P) -> AppResult<()> {
     for page in [
         OFFLINE_VISIBLE_PAGE,
         HOST_PENDING_PAGE,
-        HOST_IP_BG_PAGE,
         OFFLINE_VISIBLE_PAGE,
     ] {
         port.write_all(&set_xy_packet(0, 0))?;
@@ -381,11 +379,10 @@ mod tests {
             .filter(|packet| packet.starts_with(&[0x02, 0x03, 0x00]))
             .cloned()
             .collect();
-        assert_eq!(photo_packets.len(), 4);
+        assert_eq!(photo_packets.len(), 3);
         assert_eq!(photo_packets[0], vec![0x02, 0x03, 0x00, 0x00, 0x00, 0x00]);
         assert_eq!(photo_packets[1], vec![0x02, 0x03, 0x00, 0x01, 0x2c, 0x00]);
-        assert_eq!(photo_packets[2], vec![0x02, 0x03, 0x00, 0x01, 0xf4, 0x00]);
-        assert_eq!(photo_packets[3], vec![0x02, 0x03, 0x00, 0x00, 0x00, 0x00]);
+        assert_eq!(photo_packets[2], vec![0x02, 0x03, 0x00, 0x00, 0x00, 0x00]);
     }
 
     #[test]

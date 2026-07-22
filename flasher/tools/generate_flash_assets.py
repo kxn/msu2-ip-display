@@ -132,7 +132,7 @@ def build_contact_sheet() -> Image.Image:
     visible = rgb565be_to_image(ASSET_DIR / "offline.rgb565be").resize(
         (WIDTH * scale, HEIGHT * scale), Image.Resampling.NEAREST
     )
-    blank = rgb565be_to_image(ASSET_DIR / "ip_bg.rgb565be").resize(
+    blank = rgb565be_to_image(ASSET_DIR / "offline_blank.rgb565be").resize(
         (WIDTH * scale, HEIGHT * scale), Image.Resampling.NEAREST
     )
 
