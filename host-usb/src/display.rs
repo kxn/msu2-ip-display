@@ -45,10 +45,8 @@ const RGB565_TEXT: u16 = 0x5fd0;
 const RGB565_BLACK: u16 = 0x0000;
 const KEEPALIVE_X: u16 = SCREEN_WIDTH - 1;
 const KEEPALIVE_Y: u16 = SCREEN_HEIGHT - 1;
-const ACQUIRING_RGB565BE: &[u8] =
-    include_bytes!("../../flasher/src-tauri/assets/acquiring.rgb565be");
-const DHCP_FAILED_RGB565BE: &[u8] =
-    include_bytes!("../../flasher/src-tauri/assets/dhcp_failed.rgb565be");
+const ACQUIRING_RGB565BE: &[u8] = include_bytes!("../assets/acquiring.rgb565be");
+const DHCP_FAILED_RGB565BE: &[u8] = include_bytes!("../assets/dhcp_failed.rgb565be");
 
 impl DisplayRenderer {
     pub fn pending() -> Vec<WireWrite> {
